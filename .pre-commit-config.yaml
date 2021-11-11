@@ -36,3 +36,13 @@ repos:
     rev: 3.9.2
     hooks:
       - id: flake8
+  # https://towardsdatascience.com/getting-started-with-python-pre-commit-hooks-28be2b2d09d5
+  # the following is windows only due to using `python` instead of `python3`
+  # - repo: local
+  #   hooks:
+  #     - id: minimum-changes-local
+  #       name: minimum-changes-local
+  #       entry: python pre_commit_hooks/minimum_changes.py
+  #       language: system
+  #       pass_filenames: True
+  #       args: [--min-changes=0]
