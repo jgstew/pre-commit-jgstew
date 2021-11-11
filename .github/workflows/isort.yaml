@@ -26,7 +26,7 @@ jobs:
           python-version: "3.8"
       - name: Install isort
         run: pip install isort
-      # - name: Install requirements
-      #   run: pip install -r requirements.txt
+      - name: Install requirements
+        run: if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       - name: Run isort
         run: isort . --check --diff
