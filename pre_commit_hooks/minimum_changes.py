@@ -29,17 +29,20 @@ def main(argv=None):
 
     retval = 0
     for filename in args.filenames:
-        output = subprocess.check_output(
-            ["git", "diff", "--numstat", "--cached", filename]
-        ).decode()
-        lines_add, lines_del = re.findall(r"(\d+)\s+(\d+)\s+", output)[0]
+        output = (
+            subprocess.check_output(["git", "diff", "--numstat", "--cached", filename])
+            .decode()
+            .strip()
+        )
 
-        if max(int(lines_add), int(lines_del)) <= int(args.min_changes):
-            retval = retval + 1
-            print(
-                f"INFO: file `{filename}` does not have at least `{args.min_changes}` changes"
-            )
+        if output != "":
+            lines_add, lines_del = re.findall(r"(\d+)\s+(\d+)\s+", output)[0]
 
+            if max(int(lines_add), int(lines_del)) <= int(args.min_changes):
+                retval = retval + 1
+                print(
+                    f"INFO: file `{filename}` does not have at least `{args.min_changes}` changes"
+                )
     return retval
 
 

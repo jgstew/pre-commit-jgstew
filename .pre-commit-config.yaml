@@ -36,6 +36,10 @@ repos:
     rev: 3.9.2
     hooks:
       - id: flake8
+  - repo: https://github.com/psf/black
+    rev: 21.10b0
+    hooks:
+      - id: black
   # https://towardsdatascience.com/getting-started-with-python-pre-commit-hooks-28be2b2d09d5
   # the following is windows only due to using `python` instead of `python3`
   # - repo: local
