@@ -45,7 +45,7 @@ repos:
     rev: v1.0.0
     hooks:
       - id: minimum-changes
-        args: [--min-changes=1]
+        args: [--min-changes=0]
   # https://towardsdatascience.com/getting-started-with-python-pre-commit-hooks-28be2b2d09d5
   # the following is windows only due to using `python` instead of `python3`
   # - repo: local
