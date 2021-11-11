@@ -1,13 +1,27 @@
 # pre-commit-hooks
-custom pre-commit hooks
+custom pre-commit hooks by JGStew.
 
-Work in progress - intend to add custom pre-commit hooks here in the future.
-- use `git diff --stat` to check for files with too many or too few changes?
+This repository contains hooks for [pre-commit](https://pre-commit.com/hooks.html) that may be useful to devs.
 
 ## Requirements
 
 To use these hooks, you first need to install pre-commit using the instructions here:
 https://pre-commit.com/#install
+
+## Adding hooks to your pre-commit config
+
+For any hook in this repo you wish to use, add the following to your pre-commit config file `.pre-commit-config.yaml`:
+
+```yaml
+---
+repos:
+  - repo: https://github.com/jgstew/pre-commit-jgstew
+    rev: v1.0.0
+    hooks:
+    -   id: minimum-changes
+```
+
+After adding a hook to your pre-commit config, it's not a bad idea to run `pre-commit autoupdate` to ensure you have the latest version of the hooks.
 
 ## Test commands:
 
