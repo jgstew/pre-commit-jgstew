@@ -1,0 +1,8 @@
+---
+- id: minimum-changes
+  name: Minimum Changes
+  description: This hook checks for a minimum number of line changes against git diff
+  entry: minimum-changes
+  language: python
+  pass_filenames: True
+  types: [text]
