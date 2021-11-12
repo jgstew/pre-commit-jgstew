@@ -42,10 +42,10 @@ repos:
     hooks:
       - id: black
   - repo: https://github.com/jgstew/pre-commit-jgstew
-    rev: v1.0.0
+    rev: v1.0.1
     hooks:
       - id: minimum-changes
-        args: [--min-changes=-1]
+        args: [--min-changes=0]
   # https://towardsdatascience.com/getting-started-with-python-pre-commit-hooks-28be2b2d09d5
   # the following might not work everywhere due to using `python` instead of `python3`
   - repo: local
