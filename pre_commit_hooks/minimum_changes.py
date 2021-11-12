@@ -50,7 +50,10 @@ def main(argv=None):
                 )
                 if args.auto_revert:
                     print(f"INFO: auto reverting `{filename}`")
-                    print(subprocess.check_output(["git", "checkout", "--", filename]))
+                    # git reset HEAD filename
+                    subprocess.check_output(["git", "reset", "HEAD", filename])
+                    # git checkout -- filename
+                    subprocess.check_output(["git", "checkout", "--", filename])
     return retval
 
 

@@ -55,5 +55,5 @@ repos:
         entry: python pre_commit_hooks/minimum_changes.py
         language: system
         pass_filenames: True
-        args: [--min-changes=0]
+        args: [--min-changes=2, --auto-revert]
         files: .test_file
