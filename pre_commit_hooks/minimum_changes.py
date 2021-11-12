@@ -17,6 +17,11 @@ def build_argument_parser():
         default="2",
         help="Check for at least min-changes in git diff (defaults to 2).",
     )
+    parser.add_argument(
+        "--auto-revert",
+        action="store_true",
+        help="DANGER! will revert the file automatically",
+    )
     return parser
 
 
@@ -43,6 +48,9 @@ def main(argv=None):
                 print(
                     f"INFO: file `{filename}` does not have at least `{args.min_changes}` changes"
                 )
+                if args.auto_revert:
+                    print(f"INFO: auto reverting `{filename}`")
+                    subprocess.check_output(["git", "checkout", "--", filename])
     return retval
 
 
