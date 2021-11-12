@@ -43,14 +43,14 @@ def main(argv=None):
         if output != "":
             lines_add, lines_del = re.findall(r"(\d+)\s+(\d+)\s+", output)[0]
 
-            if max(int(lines_add), int(lines_del)) <= int(args.min_changes):
+            if max(int(lines_add), int(lines_del)) < int(args.min_changes):
                 retval = retval + 1
                 print(
                     f"INFO: file `{filename}` does not have at least `{args.min_changes}` changes"
                 )
                 if args.auto_revert:
                     print(f"INFO: auto reverting `{filename}`")
-                    subprocess.check_output(["git", "checkout", "--", filename])
+                    print(subprocess.check_output(["git", "checkout", "--", filename]))
     return retval
 
 
