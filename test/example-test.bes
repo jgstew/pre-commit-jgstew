@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<BES xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="BES.xsd">
+	<Task>
+		<Title>Nothing - Example</Title>
+		<Description><![CDATA[
+            This does nothing. It is just an example XML file.
+        ]]></Description>
+		<Relevance>False</Relevance>
+		<Relevance><![CDATA[False]]></Relevance>
+		<Category></Category>
+		<DownloadSize>0</DownloadSize>
+		<Source>Internal</Source>
+		<SourceID>jgstew</SourceID>
+		<SourceReleaseDate>2021-11-15</SourceReleaseDate>
+        <SourceSeverity><![CDATA[]]></SourceSeverity>
+		<CVENames><![CDATA[]]></CVENames>
+		<SANSID><![CDATA[]]></SANSID>
+		<MIMEField>
+			<Name>x-fixlet-modification-time</Name>
+			<Value>Mon, 15 Nov 2021 20:05:18 +0000</Value>
+		</MIMEField>
+		<Domain>BESC</Domain>
+		<DefaultAction ID="Action1">
+			<Description>
+				<PreLink>Click </PreLink>
+				<Link>here</Link>
+				<PostLink> to deploy this action.</PostLink>
+			</Description>
+			<ActionScript MIMEType="application/x-Fixlet-Windows-Shell">
+// Nothing
+dos echo Nothing
+</ActionScript>
+			<SuccessCriteria Option="OriginalRelevance"></SuccessCriteria>
+		</DefaultAction>
+    </Task>
+</BES>
