@@ -41,13 +41,14 @@ def main(argv=None):
 
     retval = 0
     for filename in args.filenames:
-        print(filename)
         with open(filename, "r") as f:
             matches = re.findall(re_pattern, "\n".join(f.readlines()))
 
         for match in matches:
             if match not in ref_file_array:
-                print(f"ERROR: Match `{match}` not found in reference file")
+                print(
+                    f"ERROR: Match `{match}` from `{filename}` not found in reference file"
+                )
                 retval = retval + 1
 
     return retval
