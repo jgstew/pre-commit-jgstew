@@ -50,6 +50,14 @@ repos:
   # the following might not work everywhere due to using `python` instead of `python3`
   - repo: local
     hooks:
+      - id: validate-bes-local
+        name: validate-bes-local
+        entry: python pre_commit_hooks/validate_bes.py
+        language: system
+        pass_filenames: True
+        files: \.(bes|ojo)$
+  - repo: local
+    hooks:
       - id: minimum-changes-local
         name: minimum-changes-local
         entry: python pre_commit_hooks/minimum_changes.py
