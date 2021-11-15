@@ -9,7 +9,7 @@ repos:
     rev: v4.0.1
     hooks:
       - id: check-yaml
-      - id: check-json
+      # - id: check-json
       - id: check-added-large-files
         args: ["--maxkb=500"]
       - id: check-ast
@@ -46,6 +46,7 @@ repos:
     hooks:
       - id: minimum-changes
         args: [--min-changes=0]
+  # Local Hooks:
   # https://towardsdatascience.com/getting-started-with-python-pre-commit-hooks-28be2b2d09d5
   # the following might not work everywhere due to using `python` instead of `python3`
   - repo: local
@@ -56,6 +57,15 @@ repos:
         language: system
         pass_filenames: True
         files: \.(bes|ojo)$
+  - repo: local
+    hooks:
+      - id: verify-files-contain-entry-local
+        name: verify-files-contain-entry-local
+        entry: python pre_commit_hooks/verify_files_contain_entry.py
+        language: system
+        pass_filenames: True
+        files: \.bes$
+        args: ["--ref-file=test/example.test_file", "--re-pattern=(?i)<Title>(.+)</Title>"]
   - repo: local
     hooks:
       - id: minimum-changes-local

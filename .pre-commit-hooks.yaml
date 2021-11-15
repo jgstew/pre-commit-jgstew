@@ -14,3 +14,10 @@
   pass_filenames: True
   types: [text]
   files: \.(bes|ojo)$
+- id: verify-files-contain-entry
+  name: Verify Files Contain Entry
+  description: This hook validates that a file has a regex match or group within a reference file
+  entry: verify-files-contain-entry
+  language: python
+  pass_filenames: True
+  types: [text]

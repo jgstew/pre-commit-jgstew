@@ -3,7 +3,7 @@
 	<Task>
 		<Title>Nothing - Example</Title>
 		<Description><![CDATA[
-            This does nothing. It is just an example XML file.
+            This does nothing... It is just an example XML file.
         ]]></Description>
 		<Relevance>False</Relevance>
 		<Relevance><![CDATA[False]]></Relevance>
