@@ -13,7 +13,7 @@ def build_argument_parser():
     parser.add_argument("filenames", nargs="*", help="Filenames to check.")
     parser.add_argument(
         "--re-pattern",
-        # default="(?i)<Title>(.+)</Title>",
+        default="(?i)<Title>(.+)</Title>",
         help="Check for pattern match in file",
     )
     parser.add_argument(
@@ -42,13 +42,22 @@ def main(argv=None):
             matches = re.findall(re_pattern, "\n".join(f.readlines()))
 
             if target_match_count == 0 and len(matches) == 0:
-                # succeed
+                # success
                 continue
-            # need to check this logic:
-            if len(matches) == 0 or len(matches) < target_match_count:
+            if target_match_count == 0 and len(matches) != 0:
+                # fail
+                retval = retval + 1
+                print(f"Found unwanted match in {filename}, expected 0")
+                continue
+            if len(matches) == 0:
                 # fail
                 retval = retval + 1
                 print(f"No match found in {filename}")
+                continue
+            if len(matches) < target_match_count:
+                retval = retval + 1
+                print(f"Less than {target_match_count} matches in {filename}")
+                continue
 
     return retval
 

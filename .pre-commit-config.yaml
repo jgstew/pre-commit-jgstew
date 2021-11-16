@@ -68,6 +68,15 @@ repos:
         args: ["--ref-file=test/example.test_file", "--re-pattern=(?i)<Title>(.+)</Title>"]
   - repo: local
     hooks:
+      - id: verify-files-contain-pattern-local
+        name: verify-files-contain-pattern-local
+        entry: python pre_commit_hooks/verify_files_contain_pattern.py
+        language: system
+        pass_filenames: True
+        files: \.test_file$
+        args: ["--re-pattern=(?i)Example"]
+  - repo: local
+    hooks:
       - id: minimum-changes-local
         name: minimum-changes-local
         entry: python pre_commit_hooks/minimum_changes.py
