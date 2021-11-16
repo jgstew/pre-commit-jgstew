@@ -21,6 +21,13 @@ def build_argument_parser():
         default="-1",
         help="minimum number of matches to be found, 0 means no matches, -1 means any number of matches",
     )
+    parser.add_argument(
+        # NOTE: this has no effect if --num-matches=0
+        "--allow-none",
+        default=False,
+        action="store_true",
+        help="pass files that have 0 matches found",
+    )
 
     return parser
 
@@ -36,6 +43,8 @@ def main(argv=None):
 
     target_match_count = int(args.num_matches)
 
+    allow_none = bool(args.allow_none)
+
     retval = 0
     for filename in args.filenames:
         with open(filename, "r") as f:
@@ -50,6 +59,9 @@ def main(argv=None):
                 print(f"Found unwanted match in {filename}, expected 0")
                 continue
             if len(matches) == 0:
+                if allow_none:
+                    # success
+                    continue
                 # fail
                 retval = retval + 1
                 print(f"No match found in {filename}")
