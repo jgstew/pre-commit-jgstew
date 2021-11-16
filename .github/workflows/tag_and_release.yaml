@@ -39,7 +39,7 @@ jobs:
           ref: main
           running-workflow-name: 'Tag and Release'
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          wait-interval: 90
+          wait-interval: 50
       - name: Install requirements
         if: steps.tagged.outputs.tagged == 1
         run: if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
