@@ -1,4 +1,4 @@
-"""pre-commit hook to validate that the file being commited has regex matches or groups that are lines within a reference file."""
+"""pre-commit hook to validate that the file being committed has regex matches or groups that are lines within a reference file."""
 
 import argparse
 import os
