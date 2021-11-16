@@ -14,12 +14,12 @@ def build_argument_parser():
     parser.add_argument("filenames", nargs="*", help="Filenames to check.")
     parser.add_argument(
         "--re-pattern",
-        # default="(?i)<Title>(.+)</Title>",
+        default="(?i)<Title>(.+)</Title>",
         help="Check for pattern match result in reference file",
     )
     parser.add_argument(
         "--ref-file",
-        # default="test/example.test_file",
+        default="test/example.test_file",
         help="reference file to search within",
     )
 

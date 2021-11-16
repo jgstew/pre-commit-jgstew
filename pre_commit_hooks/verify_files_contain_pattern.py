@@ -28,6 +28,13 @@ def build_argument_parser():
         action="store_true",
         help="pass files that have 0 matches found",
     )
+    parser.add_argument(
+        # NOTE: this has no effect if --num-matches=0
+        "--allow-extra",
+        default=True,
+        action="store_true",
+        help="pass files that have more than num-matches matches found",
+    )
 
     return parser
 
@@ -45,6 +52,8 @@ def main(argv=None):
 
     allow_none = bool(args.allow_none)
 
+    allow_extra = bool(args.allow_extra)
+
     retval = 0
     for filename in args.filenames:
         with open(filename, "r") as f:
@@ -56,7 +65,7 @@ def main(argv=None):
             if target_match_count == 0 and len(matches) != 0:
                 # fail
                 retval = retval + 1
-                print(f"Found unwanted match in {filename}, expected 0")
+                print(f"ERROR: Found unwanted match in {filename}, expected 0")
                 continue
             if len(matches) == 0:
                 if allow_none:
@@ -64,11 +73,15 @@ def main(argv=None):
                     continue
                 # fail
                 retval = retval + 1
-                print(f"No match found in {filename}")
+                print(f"ERROR: No match found in {filename}")
                 continue
             if len(matches) < target_match_count:
                 retval = retval + 1
-                print(f"Less than {target_match_count} matches in {filename}")
+                print(f"ERROR: Less than {target_match_count} matches in {filename}")
+                continue
+            if not allow_extra and len(matches) > target_match_count:
+                retval = retval + 1
+                print(f"ERROR: More than {target_match_count} matches in {filename}")
                 continue
 
     return retval
