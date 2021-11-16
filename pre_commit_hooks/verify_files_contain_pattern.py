@@ -1,7 +1,6 @@
 """pre-commit hook to validate that the file being commited has regex matches or groups that are lines within a reference file."""
 
 import argparse
-import os
 import re
 
 
@@ -15,12 +14,12 @@ def build_argument_parser():
     parser.add_argument(
         "--re-pattern",
         # default="(?i)<Title>(.+)</Title>",
-        help="Check for pattern match result in reference file",
+        help="Check for pattern match in file",
     )
     parser.add_argument(
-        "--ref-file",
-        # default="test/example.test_file",
-        help="reference file to search within",
+        "--num-matches",
+        default="-1",
+        help="minimum number of matches to be found, 0 means no matches, -1 means any number of matches",
     )
 
     return parser
@@ -35,21 +34,21 @@ def main(argv=None):
 
     re_pattern = re.compile(args.re_pattern)
 
-    with open(os.path.abspath(args.ref_file), "r") as f:
-        ref_file_array = f.read().splitlines()
-    # print(ref_file_array)
+    target_match_count = int(args.num_matches)
 
     retval = 0
     for filename in args.filenames:
         with open(filename, "r") as f:
             matches = re.findall(re_pattern, "\n".join(f.readlines()))
 
-        for match in matches:
-            if match not in ref_file_array:
-                print(
-                    f"ERROR: Match `{match}` from `{filename}` not found in reference file"
-                )
+            if target_match_count == 0 and len(matches) == 0:
+                # succeed
+                continue
+            # need to check this logic:
+            if len(matches) == 0 or len(matches) < target_match_count:
+                # fail
                 retval = retval + 1
+                print(f"No match found in {filename}")
 
     return retval
 
