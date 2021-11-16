@@ -4,6 +4,8 @@ import argparse
 import os
 import re
 
+import thefuzz.process
+
 
 def build_argument_parser():
     """Build and return the argument parser."""
@@ -48,6 +50,13 @@ def main(argv=None):
             if match not in ref_file_array:
                 print(
                     f"ERROR: Match `{match}` from `{filename}` not found in reference file"
+                )
+                # consider trying fuzzy search
+                close_match, confidence_match = thefuzz.process.extractOne(
+                    match, ref_file_array
+                )
+                print(
+                    f"closest match is {close_match} with {confidence_match}% confidence"
                 )
                 retval = retval + 1
 
