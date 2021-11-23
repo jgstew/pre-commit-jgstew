@@ -35,6 +35,12 @@ def build_argument_parser():
         action="store_true",
         help="pass files that have more than num-matches matches found",
     )
+    parser.add_argument(
+        "--append-filepath",
+        default=False,
+        action="store_true",
+        help="add file path to list of things to regex match",
+    )
 
     return parser
 
@@ -54,10 +60,17 @@ def main(argv=None):
 
     allow_extra = bool(args.allow_extra)
 
+    append_filepath = bool(args.append_filepath)
+
     retval = 0
     for filename in args.filenames:
         with open(filename, "r") as f:
-            matches = re.findall(re_pattern, "\n".join(f.readlines()))
+            file_lines = f.readlines()
+
+            if append_filepath:
+                file_lines.append(filename)
+
+            matches = re.findall(re_pattern, "\n".join(file_lines))
 
             if target_match_count == 0 and len(matches) == 0:
                 # success

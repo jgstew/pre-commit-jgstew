@@ -28,3 +28,10 @@
   language: python
   pass_filenames: True
   types: [text]
+- id: verify-files-are-ascii
+  name: Verify Files Are ASCII
+  description: This hook validates that a file has only ASCII contents
+  entry: verify-files-are-ascii
+  language: python
+  pass_filenames: True
+  types: [text]
