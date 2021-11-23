@@ -42,7 +42,7 @@ repos:
     hooks:
       - id: black
   - repo: https://github.com/jgstew/pre-commit-jgstew
-    rev: v1.0.1
+    rev: v1.0.5
     hooks:
       - id: minimum-changes
         args: [--min-changes=0]
