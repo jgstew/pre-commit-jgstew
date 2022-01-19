@@ -84,3 +84,9 @@ repos:
         pass_filenames: True
         args: [--min-changes=2, --auto-revert]
         files: .test_file
+  - repo: local
+    hooks:
+      - id: git-clean
+        name: git-clean
+        entry: python pre_commit_hooks/git_clean.py
+        language: system
