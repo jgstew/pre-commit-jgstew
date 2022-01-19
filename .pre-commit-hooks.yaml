@@ -35,8 +35,8 @@
   language: python
   pass_filenames: True
   types: [text]
-# - id: git-clean
-#   name: Run Git Clean
-#   description: This will delete untracked files by running `git clean -f`
-#   entry: git-clean
-#   language: python
+- id: git-clean
+  name: Run Git Clean
+  description: This will delete untracked files by running `git clean -f`
+  entry: git-clean
+  language: python
