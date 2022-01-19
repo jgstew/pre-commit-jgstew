@@ -40,3 +40,4 @@
   description: This will delete untracked files by running `git clean -f`
   entry: git-clean
   language: python
+  pass_filenames: False
