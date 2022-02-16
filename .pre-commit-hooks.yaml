@@ -41,3 +41,11 @@
   entry: git-clean
   language: python
   pass_filenames: False
+- id: regex-search-filter-replace
+  name: RegEx Search Filter Replace
+  description: This hook replaces file contents based upon RegEx and RegEx filter
+  entry: regex-search-filter-replace
+  language: python
+  pass_filenames: True
+  types: [text]
+  files: \.(xml|html|htm|bes|ojo)$

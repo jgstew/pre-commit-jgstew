@@ -54,19 +54,24 @@ def main(argv=None):
         print(filename)
         with open(filename, "r") as f:
             filetext = f.read()
+            # get matches of search RegEx
             matches = re.findall(args.search, filetext)
 
         # print(matches)
 
         for match in matches:
             retval = retval + 1
+            # get only the filtered part of the match
             filtered_match = re.findall(args.filter, match)[0]
             # print(filtered_match)
+            # replace the filtered part of the match with the replacement value
             replaced_match = match.replace(filtered_match, args.replace)
             # print(replaced_match)
+            # save result to file representation
             filetext = filetext.replace(match, replaced_match)
             # print(filetext)
 
+        # if configured, overwrite the original file
         if args.overwrite:
             with open(filename, "w") as f:
                 f.write(filetext)
