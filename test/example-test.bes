@@ -28,6 +28,7 @@
 			</Description>
 			<ActionScript MIMEType="application/x-Fixlet-Windows-Shell">
 // Nothing
+
 dos echo Nothing
 </ActionScript>
 			<SuccessCriteria Option="OriginalRelevance"></SuccessCriteria>

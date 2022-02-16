@@ -1,7 +1,7 @@
 [flake8]
 select = B,C,E,F,P,W,B9
 max-line-length = 88
-extend-ignore = E203, W503, F401
+extend-ignore = E203, W503, F401, B950
 
 ### DEFAULT IGNORES FOR 4-space INDENTED PROJECTS ###
 # E127, E128 are hard to silence in certain nested formatting situations.
@@ -18,3 +18,5 @@ ignore = E127, E128, E203, E265, E266, E402, E501, E722, P207, P208, W503
 
 per-file-ignores =
     SharedProcessors/BigFixActioner.py:B950
+
+exclude = .git,__pycache__,build,dist
