@@ -1,0 +1,23 @@
+# EditorConfig is awesome: https://EditorConfig.org
+# Requires plugin for VSCode:
+# - https://marketplace.visualstudio.com/items?itemName=EditorConfig.EditorConfig
+
+# top-most EditorConfig file
+root = true
+
+[*]
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.py]
+# the following is required for compatibility with black:
+indent_style = space
+indent_size = 4
+
+[*.bes]
+indent_style = tab
+# should tabs be represented by 2, 3, or 4 spaces?
+indent_size = 2
+# actionscript within the XML of BES files MUST have windows line endings:
+end_of_line = crlf
