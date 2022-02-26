@@ -1,0 +1,8 @@
+{
+  "git.autofetch": true,
+  "editor.formatOnSave": true,
+  "python.analysis.diagnosticSeverityOverrides": {
+    "reportMissingImports": "information"
+  },
+  "python.formatting.provider": "black"
+}
