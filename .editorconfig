@@ -17,7 +17,7 @@ indent_size = 4
 
 [*.bes]
 indent_style = tab
-# should tabs be represented by 2, 3, or 4 spaces?
-indent_size = 2
+# should tabs be 2, 3, or 4 spaces?
+# indent_size = 4
 # actionscript within the XML of BES files MUST have windows line endings:
 end_of_line = crlf
