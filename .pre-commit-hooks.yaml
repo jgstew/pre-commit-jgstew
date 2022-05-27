@@ -5,6 +5,7 @@
   entry: minimum-changes
   language: python
   pass_filenames: True
+  require_serial: True
   types: [text]
 - id: validate-bes
   name: Validate BigFix BES Files
