@@ -51,3 +51,9 @@ jobs:
       - name: Test python import
         shell: bash
         run: python -c "import pre_commit_hooks; print(pre_commit_hooks.__version__)"
+      - name: Test pre-commit hook
+        shell: bash
+        run: python -c "import pre_commit_hooks.git_clean; pre_commit_hooks.git_clean.main()"
+      - name: Test pre-commit hook
+        shell: bash
+        run: python -c "import pre_commit_hooks.minimum_changes; pre_commit_hooks.minimum_changes.main()"
