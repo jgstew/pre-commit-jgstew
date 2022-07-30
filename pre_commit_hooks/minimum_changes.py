@@ -4,7 +4,15 @@ import argparse
 import re
 import subprocess
 
-from shared_utils import revert_file
+
+def revert_file(filename):
+    """automatically revert file"""
+    print(f"INFO: auto reverting `{filename}`")
+    # https://docs.gitlab.com/ee/topics/git/numerous_undo_possibilities_in_git/
+    # git reset HEAD filename
+    subprocess.check_output(["git", "reset", "HEAD", filename])
+    # git checkout -- filename
+    subprocess.check_output(["git", "checkout", "--", filename])
 
 
 def build_argument_parser():
