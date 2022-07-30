@@ -65,7 +65,11 @@ repos:
         language: system
         pass_filenames: True
         files: \.bes$
-        args: ["--ref-file=test/example.test_file", "--re-pattern=(?i)<Title>(.+)</Title>"]
+        args:
+          [
+            "--ref-file=test/example.test_file",
+            "--re-pattern=(?i)<Title>(.+)</Title>",
+          ]
   - repo: local
     hooks:
       - id: verify-files-contain-pattern-local

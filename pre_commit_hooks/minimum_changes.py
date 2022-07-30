@@ -4,6 +4,8 @@ import argparse
 import re
 import subprocess
 
+from shared_utils import revert_file
+
 
 def build_argument_parser():
     """Build and return the argument parser."""
@@ -49,12 +51,13 @@ def main(argv=None):
                     f"INFO: file `{filename}` does not have at least `{args.min_changes}` changes"
                 )
                 if args.auto_revert:
-                    print(f"INFO: auto reverting `{filename}`")
-                    # https://docs.gitlab.com/ee/topics/git/numerous_undo_possibilities_in_git/
-                    # git reset HEAD filename
-                    subprocess.check_output(["git", "reset", "HEAD", filename])
-                    # git checkout -- filename
-                    subprocess.check_output(["git", "checkout", "--", filename])
+                    revert_file(filename)
+                    # print(f"INFO: auto reverting `{filename}`")
+                    # # https://docs.gitlab.com/ee/topics/git/numerous_undo_possibilities_in_git/
+                    # # git reset HEAD filename
+                    # subprocess.check_output(["git", "reset", "HEAD", filename])
+                    # # git checkout -- filename
+                    # subprocess.check_output(["git", "checkout", "--", filename])
     return retval
 
 
