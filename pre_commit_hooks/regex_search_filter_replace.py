@@ -3,9 +3,16 @@
 The default functionality is to remove extra newlines between XML or HTML tags"""
 
 import argparse
+import os
 import re
 
-from shared_utils import validate_filepath
+
+def validate_filepath(filepath=""):
+    """validate string is filepath or URL"""
+    if os.path.isfile(filepath) and os.access(filepath, os.R_OK):
+        return filepath
+    else:
+        raise ValueError(filepath)
 
 
 def build_argument_parser():

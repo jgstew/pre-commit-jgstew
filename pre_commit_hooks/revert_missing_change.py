@@ -24,6 +24,7 @@ def build_argument_parser():
     parser.add_argument("filenames", nargs="*", help="Filenames to check.")
     parser.add_argument(
         "--change_regex",
+        default="v[0-9]+",
         help="RegEx string to check for in git history.",
     )
     parser.add_argument(

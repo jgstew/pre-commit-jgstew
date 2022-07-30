@@ -51,9 +51,21 @@ jobs:
       - name: Test python import
         shell: bash
         run: python -c "import pre_commit_hooks; print(pre_commit_hooks.__version__)"
-      - name: Test pre-commit hook
+      - name: Test pre-commit hook invoke
         shell: bash
         run: python -c "import pre_commit_hooks.git_clean; pre_commit_hooks.git_clean.main()"
-      - name: Test pre-commit hook
+      - name: Test pre-commit hook invoke
         shell: bash
         run: python -c "import pre_commit_hooks.minimum_changes; pre_commit_hooks.minimum_changes.main()"
+      - name: Test pre-commit hook invoke
+        shell: bash
+        run: python -c "import pre_commit_hooks.regex_search_filter_replace; pre_commit_hooks.regex_search_filter_replace.main()"
+      - name: Test pre-commit hook invoke
+        shell: bash
+        run: python -c "import pre_commit_hooks.revert_missing_change; pre_commit_hooks.revert_missing_change.main()"
+      - name: pip install of pre-commit
+        shell: bash
+        run: pip install pre-commit
+      - name: pre-commit try-repo
+        shell: bash
+        run: pre-commit try-repo . --files test/example.test_file test/example-test.bes

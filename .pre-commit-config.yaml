@@ -102,5 +102,6 @@ repos:
         entry: python pre_commit_hooks/revert_missing_change.py
         language: system
         pass_filenames: True
-        args: ['--change_regex=v[0-9]+(\.[0-9]+)*\s*</Title>', --auto-revert]
+        args: ['--change_regex=v[0-9]+(\.[0-9]+)*\s*</Title>']
         files: .test_file
+# pre-commit try-repo . --files test/example.test_file test/example-test.bes
