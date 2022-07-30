@@ -111,3 +111,5 @@ repos:
         entry: pre-commit try-repo . --files test/example.test_file test/example-test.bes
         language: system
         pass_filenames: False
+        require_serial: True
+        stages: [manual]
