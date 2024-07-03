@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        py-version: ["3.8", "3.10"]
+        py-version: ["3.8", "3.12"]
     steps:
       - uses: actions/checkout@v2
       - name: Set up Python
@@ -66,9 +66,12 @@ jobs:
       - name: Test pre-commit hook invoke
         shell: bash
         run: python -c "import pre_commit_hooks.revert_missing_change; pre_commit_hooks.revert_missing_change.main()"
+      - name: Test pre-commit hook invoke
+        shell: bash
+        run: python -c "import pre_commit_hooks.validate_plist; pre_commit_hooks.validate_plist.main()"
       - name: pip install of pre-commit
         shell: bash
         run: pip install pre-commit
       - name: pre-commit try-repo
         shell: bash
-        run: pre-commit try-repo . --files test/example.test_file test/example-test.bes
+        run: pre-commit try-repo . --files test/example.test_file test/example-test.bes test/nested-sample.plist
