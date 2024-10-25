@@ -62,7 +62,7 @@ jobs:
         id: getwheelfile
         shell: bash
         run: echo "wheelfile=$(find "dist" -type f -name "*.whl")" >> $GITHUB_OUTPUT
-        
+
       - name: Automatically create github release
         if: steps.tagged.outputs.tagged == 1
         uses: "marvinpinto/action-automatic-releases@latest"
