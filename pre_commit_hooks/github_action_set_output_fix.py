@@ -1,5 +1,5 @@
 r"""
-github action set output fix pre-commit hook. WORK IN PROGRESS
+github action set output fix pre-commit hook.
 
 This hook is meant to run once manually to fix github actions
 
@@ -59,15 +59,12 @@ def main(argv=None):
         # check if file contains: /.+echo +(["']::set-output +name=/
         with open(filename, "r") as f:
             filetext = f.read()
-            # check if file has the issue:
+
+            # check if file has the set-output issue:
             matches = re.findall(
                 r"(?m).+echo +([\"']::set-output +name=(\S+?)::(.+?)[\"'])(?:$| \|)",
                 filetext,
             )
-
-            # if not found, continue
-            if not matches or len(matches) == 0:
-                continue
 
             # do replacement fix
             for match in matches:
@@ -77,8 +74,25 @@ def main(argv=None):
                 print(match)
                 fixed_string = f'"{match[1]}={match[2]}" >> $GITHUB_OUTPUT'
                 print(fixed_string)
-                filetext.replace(match[0], fixed_string)
+                filetext = filetext.replace(match[0], fixed_string)
 
+            # check if file has the save-state issue:
+            matches = re.findall(
+                r"(?m).+echo +([\"']::save-state +name=(\S+?)::(.+?)[\"'])(?:$| \|)",
+                filetext,
+            )
+
+            # do replacement fix
+            for match in matches:
+                # if matches, then:
+                retval = retval + 1
+
+                print(match)
+                fixed_string = f'"{match[1]}={match[2]}" >> $GITHUB_STATE'
+                print(fixed_string)
+                filetext = filetext.replace(match[0], fixed_string)
+
+        # print(filetext)
         with open(filename, "w") as f:
             f.write(filetext)
 
