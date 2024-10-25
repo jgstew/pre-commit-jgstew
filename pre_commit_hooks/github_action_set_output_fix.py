@@ -36,6 +36,13 @@ def build_argument_parser():
     )
     parser.add_argument("filenames", nargs="*", help="Filenames to check.")
 
+    parser.add_argument(
+        "--overwrite",
+        default=False,
+        action="store_true",
+        help="overwrite file with changes",
+    )
+
     return parser
 
 
@@ -92,9 +99,10 @@ def main(argv=None):
                 print(fixed_string)
                 filetext = filetext.replace(match[0], fixed_string)
 
-        # print(filetext)
-        with open(filename, "w") as f:
-            f.write(filetext)
+        # if configured, overwrite the original file
+        if args.overwrite:
+            with open(filename, "w") as f:
+                f.write(filetext)
 
     return retval
 
