@@ -17,6 +17,10 @@ jobs:
       - name: "Checkout source code"
         uses: "actions/checkout@v4"
 
+      # need to fetch tags for later check
+      - name: Get tags
+        run: git fetch --tags origin
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -29,12 +33,12 @@ jobs:
       # only make release if there is NOT a git tag for this version
       - name: "Check: package version has corresponding git tag"
         # this will prevent this from doing anything when run through ACT
-        if: ${{ !env.ACT }}
+        if: ${{ !env.ACT }} && contains(steps.getversion.outputs.version, '.')
         id: tagged
         shell: bash
         run: |
           git show-ref --tags --verify --quiet -- "refs/tags/v${{ steps.getversion.outputs.version }}" && tag_not_exists=$? || tag_not_exists=$?
-          echo "exit code was is $tag_not_exists"
+          echo "exit code was $tag_not_exists"
           if [ $tag_not_exists -eq 0 ]
           then
           echo "::set-output name=tagged::0"
