@@ -67,3 +67,12 @@
   require_serial: True
   types: [text]
   stages: [manual]
+- id: github-action-set-output-fix
+  name: Github Action Set Output Fix
+  description: This hook replaces github action lines using deprecated set-output or save-state
+  entry: github-action-set-output-fix
+  language: python
+  pass_filenames: True
+  types: [text]
+  files: \.(yml|yaml)$
+  stages: [manual]

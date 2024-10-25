@@ -53,7 +53,7 @@ def main(argv=None):
             continue
 
         # should only apply to github actions (files in `.github` folder)
-        if not ".github" in filename.lower():
+        if ".github" not in filename.lower():
             continue
 
         # check if file contains: /.+echo +(["']::set-output +name=/
