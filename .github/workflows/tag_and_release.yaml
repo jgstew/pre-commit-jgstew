@@ -24,7 +24,7 @@ jobs:
         id: getversion
         run: echo "::set-output name=version::$(python ./setup.py --version)"
       # only make release if there is NOT a git tag for this version
-      - name: 'Check: package version has corresponding git tag'
+      - name: "Check: package version has corresponding git tag"
         # this will prevent this from doing anything when run through ACT
         if: ${{ !env.ACT }}
         id: tagged
@@ -37,7 +37,7 @@ jobs:
         uses: lewagon/wait-on-check-action@v0.2
         with:
           ref: main
-          running-workflow-name: 'Tag and Release'
+          running-workflow-name: "Tag and Release"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 50
       - name: Install requirements

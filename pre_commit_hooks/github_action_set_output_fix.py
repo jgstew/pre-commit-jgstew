@@ -1,4 +1,4 @@
-"""
+r"""
 github action set output fix pre-commit hook. WORK IN PROGRESS
 
 This hook is meant to run once manually to fix github actions
@@ -19,9 +19,13 @@ run: echo "{name}={value}" >> $GITHUB_OUTPUT
 
 RegEx to match:
 echo +(["']::set-output +name=(\S+?)::(.+?)["'])(?:$| \|)
+
+Invoke this standalone:
+python3 pre_commit_hooks/github_action_set_output_fix.py .github/workflows/tag_and_release.yaml
 """
 
 import argparse
+import re
 
 
 def build_argument_parser():
@@ -45,22 +49,44 @@ def main(argv=None):
     for filename in args.filenames:
         print(filename)
         # check if file ends with ".yml" or ".yaml"
+        if not filename.lower().endswith((".yml", ".yaml")):
+            continue
+
         # should only apply to github actions (files in `.github` folder)
+        if not ".github" in filename.lower():
+            continue
 
         # check if file contains: /.+echo +(["']::set-output +name=/
+        with open(filename, "r") as f:
+            filetext = f.read()
+            # check if file has the issue:
+            matches = re.findall(
+                r"(?m).+echo +([\"']::set-output +name=(\S+?)::(.+?)[\"'])(?:$| \|)",
+                filetext,
+            )
 
-        # if not, continue
+            # if not found, continue
+            if not matches or len(matches) == 0:
+                continue
 
-        # if so, check that line does not start with # (if so continue)
+            # do replacement fix
+            for match in matches:
+                # if matches, then:
+                retval = retval + 1
 
-        # get results from /echo +(["']::set-output +name=(\S+?)::(.+?)["'])(?:$| \|)/
+                print(match)
+                fixed_string = f'"{match[1]}={match[2]}" >> $GITHUB_OUTPUT'
+                print(fixed_string)
+                filetext.replace(match[0], fixed_string)
 
-        # if results, then:
-        # retval = retval + 1
-        # do replacement fix
+        with open(filename, "w") as f:
+            f.write(filetext)
 
     return retval
 
 
 if __name__ == "__main__":
-    exit(main())
+    print(__name__)
+    exit_code = main()
+    print("Matches:", exit_code)
+    exit(exit_code)
