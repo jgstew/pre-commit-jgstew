@@ -33,8 +33,7 @@ jobs:
         id: tagged
         shell: bash
         run: |
-          git show-ref --tags --verify --quiet -- "refs/tags/v${{ steps.getversion.outputs.version }}"
-          tag_not_exists=$?
+          git show-ref --tags --verify --quiet -- "refs/tags/v${{ steps.getversion.outputs.version }}" && tag_not_exists=$? || tag_not_exists=$?
           echo "exit code was is $tag_not_exists"
           if [ $tag_not_exists -eq 0 ]
           then
