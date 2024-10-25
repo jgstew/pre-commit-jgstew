@@ -1,0 +1,11 @@
+[core]
+    hideDotFiles = true
+    editor = code --wait
+[rebase]
+    autoStash = true
+[pull]
+    rebase = true
+[diff]
+    tool = vscode
+[difftool "vscode"]
+    cmd = code --wait --diff \"$LOCAL\" \"$REMOTE\"
