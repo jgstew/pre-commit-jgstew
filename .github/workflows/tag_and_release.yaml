@@ -22,14 +22,14 @@ jobs:
           python-version: 3.8
       - name: Read VERSION file
         id: getversion
-        run: echo "::set-output name=version::$(python ./setup.py --version)"
+        run: echo "version=$(python ./setup.py --version)" >> $GITHUB_OUTPUT
       # only make release if there is NOT a git tag for this version
       - name: "Check: package version has corresponding git tag"
         # this will prevent this from doing anything when run through ACT
         if: ${{ !env.ACT }}
         id: tagged
         shell: bash
-        run: git show-ref --tags --verify --quiet -- "refs/tags/v${{ steps.getversion.outputs.version }}" && echo "::set-output name=tagged::0" || echo "::set-output name=tagged::1"
+        run: git show-ref --tags --verify --quiet -- "refs/tags/v${{ steps.getversion.outputs.version }}" && echo "tagged=0" >> $GITHUB_OUTPUT || echo "tagged=1" >> $GITHUB_OUTPUT
       # wait for all other tests to succeed
       #   what if no other tests?
       - name: Wait for tests to succeed
@@ -53,7 +53,7 @@ jobs:
         if: steps.tagged.outputs.tagged == 1
         id: getwheelfile
         shell: bash
-        run: echo "::set-output name=wheelfile::$(find "dist" -type f -name "*.whl")"
+        run: echo "wheelfile=$(find "dist" -type f -name "*.whl")" >> $GITHUB_OUTPUT
       - name: Automatically create github release
         if: steps.tagged.outputs.tagged == 1
         uses: "marvinpinto/action-automatic-releases@latest"
