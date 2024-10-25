@@ -17,10 +17,6 @@ jobs:
       - name: "Checkout source code"
         uses: "actions/checkout@v4"
 
-      # need to fetch tags for later check
-      - name: Get tags
-        run: git fetch --tags origin
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -29,6 +25,10 @@ jobs:
       - name: Read VERSION file
         id: getversion
         run: echo "version=$(python ./setup.py --version)" >> $GITHUB_OUTPUT
+
+      # need to fetch tags for next step
+      - name: Get tags
+        run: git fetch --tags origin
 
       # only make release if there is NOT a git tag for this version
       - name: "Check: package version has corresponding git tag"
