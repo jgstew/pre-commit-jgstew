@@ -41,9 +41,11 @@ jobs:
           echo "exit code was $tag_not_exists"
           if [ $tag_not_exists -eq 0 ]
           then
-          echo "::set-output name=tagged::0"
+          echo will not release because tag already exists
+          echo "tagged=0" >> $GITHUB_OUTPUT
           else
-          echo "::set-output name=tagged::1"
+          echo will do release because tag does not already exist
+          echo "tagged=1" >> $GITHUB_OUTPUT
           fi
 
       # wait for all other tests to succeed
