@@ -32,7 +32,16 @@ jobs:
         if: ${{ !env.ACT }}
         id: tagged
         shell: bash
-        run: git show-ref --tags --verify --quiet -- "refs/tags/v${{ steps.getversion.outputs.version }}" && echo "::set-output name=tagged::0" || echo "::set-output name=tagged::1"
+        run: |
+          git show-ref --tags --verify --quiet -- "refs/tags/v${{ steps.getversion.outputs.version }}"
+          tag_not_exists=$?
+          echo "exit code was is $tag_not_exists"
+          if [ $tag_not_exists -eq 0 ]
+          then
+          echo "::set-output name=tagged::0"
+          else
+          echo "::set-output name=tagged::1"
+          fi
 
       # wait for all other tests to succeed
       #   what if no other tests?
