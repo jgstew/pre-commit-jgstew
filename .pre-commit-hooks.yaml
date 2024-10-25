@@ -75,4 +75,3 @@
   pass_filenames: True
   types: [text]
   files: \.(yml|yaml)$
-  stages: [manual]
