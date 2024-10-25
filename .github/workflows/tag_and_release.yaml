@@ -16,13 +16,16 @@ jobs:
     steps:
       - name: "Checkout source code"
         uses: "actions/checkout@v4"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: 3.8
+
       - name: Read VERSION file
         id: getversion
         run: echo "version=$(python ./setup.py --version)" >> $GITHUB_OUTPUT
+
       # only make release if there is NOT a git tag for this version
       - name: "Check: package version has corresponding git tag"
         # this will prevent this from doing anything when run through ACT
@@ -30,6 +33,7 @@ jobs:
         id: tagged
         shell: bash
         run: git show-ref --tags --verify --quiet -- "refs/tags/v${{ steps.getversion.outputs.version }}" && echo "tagged=0" >> $GITHUB_OUTPUT || echo "tagged=1" >> $GITHUB_OUTPUT
+
       # wait for all other tests to succeed
       #   what if no other tests?
       - name: Wait for tests to succeed
@@ -40,20 +44,25 @@ jobs:
           running-workflow-name: "Tag and Release"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           wait-interval: 50
+
       - name: Install requirements
         if: steps.tagged.outputs.tagged == 1
         run: if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
       - name: Install build tools
         if: steps.tagged.outputs.tagged == 1
         run: pip install setuptools wheel build
+
       - name: Run build
         if: steps.tagged.outputs.tagged == 1
         run: python3 -m build
+
       - name: Get Wheel File
         if: steps.tagged.outputs.tagged == 1
         id: getwheelfile
         shell: bash
         run: echo "wheelfile=$(find "dist" -type f -name "*.whl")" >> $GITHUB_OUTPUT
+        
       - name: Automatically create github release
         if: steps.tagged.outputs.tagged == 1
         uses: "marvinpinto/action-automatic-releases@latest"
