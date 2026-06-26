@@ -75,3 +75,16 @@
   pass_filenames: True
   types: [text]
   files: \.(yml|yaml)$
+- id: add-missing-docstrings
+  name: Add missing function docstrings
+  description: >
+    Inserts a boilerplate docstring into named functions (default: main) when
+    the docstring is absent or empty. Exits 1 and modifies the files so the
+    author can review, re-stage, and commit again.
+  language: python
+  pass_filenames: True
+  entry: add-missing-docstrings
+  types: [python]
+  args:
+    - "--functions=main"
+    - "--docstring=Execution starts here."

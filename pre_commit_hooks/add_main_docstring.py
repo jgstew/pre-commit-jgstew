@@ -41,7 +41,7 @@ def find_mains_without_docstring(source):
         )
         if not has_docstring:
             # Return the def line and the expected body indentation.
-            # Do NOT use node.body[0].lineno — ast ignores comments, so that
+            # Do NOT use node.body[0].lineno - ast ignores comments, so that
             # lineno may be below comments that sit between the def and the
             # first real statement.  We scan for the signature's closing ":"
             # in add_docstring instead.

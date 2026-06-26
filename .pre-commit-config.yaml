@@ -6,7 +6,7 @@
 # https://github.com/pre-commit/pre-commit-hooks
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.3.0
+    rev: v6.0.0
     hooks:
       - id: check-yaml
       # - id: check-json
@@ -25,7 +25,7 @@ repos:
       #  args: [--markdown-linebreak-ext=md]
       - id: detect-private-key
   - repo: https://github.com/adrienverge/yamllint.git
-    rev: v1.27.1
+    rev: v1.38.0
     hooks:
       - id: yamllint
         args: [-c=.yamllint.yaml]
@@ -33,16 +33,16 @@ repos:
     rev: v5.10.1
     hooks:
       - id: isort
-  - repo: https://gitlab.com/pycqa/flake8
-    rev: 3.9.2
-    hooks:
-      - id: flake8
+  # - repo: https://gitlab.com/pycqa/flake8
+  #   rev: 3.9.2
+  #   hooks:
+  #     - id: flake8
   - repo: https://github.com/psf/black
-    rev: 22.6.0
+    rev: 26.5.1
     hooks:
       - id: black
   - repo: https://github.com/jgstew/pre-commit-jgstew
-    rev: v1.1.4
+    rev: v1.2.5
     hooks:
       - id: minimum-changes
         args: [--min-changes=0]
@@ -122,3 +122,10 @@ repos:
         pass_filenames: False
         require_serial: True
         stages: [manual]
+  - repo: local
+    hooks:
+      - id: add-missing-docstrings
+        name: add-missing-docstrings
+        entry: python pre_commit_hooks/add_main_docstring.py
+        language: system
+        pass_filenames: True
