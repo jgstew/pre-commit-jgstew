@@ -16,11 +16,16 @@ docstring), E012+E013 together (when a class has no docstring but sets
 left over once `description = __doc__` is set). Auto-fixed files are rewritten
 and the hook still exits non-zero so the changes can be reviewed and re-staged.
 
-A file can opt out of all checks with a top-of-file comment containing:
+Only AutoPkg processors are validated. A .py file that does not import
+autopkglib (`import autopkglib` or `from autopkglib import ...`) is not a
+processor, so it is skipped with a non-failing W001 warning rather than flagged
+with conventions that do not apply to it.
+
+A file can also opt out of all checks explicitly with a top-of-file comment:
     # pre-commit-skip: processor-conventions
 
 Exit codes:
-    0  all checked files conform and nothing was auto-fixed
+    0  all checked files conform (warnings alone do not fail) and nothing fixed
     1  one or more violations found, or a file was auto-fixed
 """
 
@@ -114,6 +119,26 @@ def apply_shebang_fix(path):
         content = EXPECTED_SHEBANG + "\n" + content
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(content)
+
+
+def imports_autopkglib(tree):
+    """True if the module imports autopkglib -- the marker of an AutoPkg processor.
+
+    Matches `import autopkglib`, `import autopkglib.something`, and
+    `from autopkglib[.sub] import ...`, anywhere in the file (including inside a
+    try/except) so guarded imports still count. This is the essential property
+    every processor must have; files without it are not processors.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "autopkglib" or alias.name.startswith("autopkglib."):
+                    return True
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == "autopkglib" or module.startswith("autopkglib."):
+                return True
+    return False
 
 
 # The top-level facts the module-level checks operate on, gathered in one pass.
@@ -581,6 +606,24 @@ def check_file(path, auto_fix=True):
     if SKIP_MARKER in src:
         return [], fixed
 
+    try:
+        tree = ast.parse(src)
+    except SyntaxError as err:
+        return [(err.lineno or 1, "E000", f"syntax error: {err.msg}")], fixed
+
+    # --- W001: only AutoPkg processors are subject to these conventions ---
+    # A .py file that doesn't import autopkglib is not a processor (a helper
+    # script, shared util, etc.). Warn and skip rather than flag it with dozens
+    # of irrelevant violations. W001 is a warning: it does not fail the hook.
+    if not imports_autopkglib(tree):
+        return [
+            (
+                1,
+                "W001",
+                "no `autopkglib` import found; skipping (not an AutoPkg processor)",
+            )
+        ], fixed
+
     issues = []
 
     # --- E001: shebang (auto-fixable) ---
@@ -591,13 +634,9 @@ def check_file(path, auto_fix=True):
             fixed.append((1, "E001", f"set first line to `{EXPECTED_SHEBANG}`"))
             with open(path, encoding="utf-8", errors="replace") as handle:
                 src = handle.read()
+            tree = ast.parse(src)
         else:
             issues.append((1, "E001", f"first line should be `{EXPECTED_SHEBANG}`"))
-
-    try:
-        tree = ast.parse(src)
-    except SyntaxError as err:
-        return [(err.lineno or 1, "E000", f"syntax error: {err.msg}")], fixed
 
     # --- E002: module docstring (auto-fixable when completely missing) ---
     if auto_fix:
@@ -659,22 +698,30 @@ def main(argv):
     paths = [f for f in args.files if f.endswith(".py")]
     issue_count = 0
     fix_count = 0
+    warning_count = 0
     for path in paths:
         issues, fixed = check_file(path, auto_fix=auto_fix)
         for lineno, check_id, message in fixed:
             fix_count += 1
             print(f"{path}:{lineno}: [{check_id}] auto-fixed: {message}")
         for lineno, check_id, message in issues:
-            issue_count += 1
-            print(f"{path}:{lineno}: [{check_id}] {message}")
+            # W-codes are advisory (e.g. "not a processor") and never fail the hook
+            if check_id.startswith("W"):
+                warning_count += 1
+                print(f"{path}:{lineno}: [{check_id}] warning: {message}")
+            else:
+                issue_count += 1
+                print(f"{path}:{lineno}: [{check_id}] {message}")
 
     if fix_count:
         print(f"\nauto-fixed {fix_count} issue(s); review and re-stage the changes.")
+    if warning_count:
+        print(f"{warning_count} file(s) skipped (not AutoPkg processors).")
     if issue_count:
         print(f"{issue_count} remaining processor-convention issue(s).")
-    # non-zero if anything was fixed (so the user re-stages) or any issue remains
+    # non-zero if anything was fixed (so the user re-stages) or any real issue
+    # remains; warnings alone do not fail the hook
     return 1 if (issue_count or fix_count) else 0
-    return 0
 
 
 if __name__ == "__main__":
