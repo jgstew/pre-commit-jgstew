@@ -290,7 +290,11 @@ def apply_remove_doc_assign_fix(path, assign):
     start = assign.lineno - 1
     end = (assign.end_lineno or assign.lineno) - 1
     del lines[start : end + 1]
-    if 0 < start < len(lines) and not lines[start - 1].strip() and not lines[start].strip():
+    if (
+        0 < start < len(lines)
+        and not lines[start - 1].strip()
+        and not lines[start].strip()
+    ):
         del lines[start]
     with open(path, "w", encoding="utf-8") as handle:
         handle.write("\n".join(lines))
