@@ -6,7 +6,11 @@ strictly required by AutoPkg but are the conventions used throughout this repo,
 so every processor looks and behaves consistently.
 
 Usage:
-    check_processor_conventions.py [--auto-fix=yes|no] SharedProcessors/Foo.py [...]
+    check_processor_conventions.py [--auto-fix=yes|no] [--disable E005,E020]
+        SharedProcessors/Foo.py [...]
+
+--disable takes a comma-separated list of check IDs to skip entirely. A disabled
+fixable check is neither auto-fixed nor reported.
 
 --auto-fix (default: yes) corrects the fixable conventions in place. Currently
 auto-fixable: E001 (the shebang), E002 (a completely missing module-level
@@ -37,6 +41,37 @@ import sys
 
 SKIP_MARKER = "pre-commit-skip: processor-conventions"
 EXPECTED_SHEBANG = "#!/usr/local/autopkg/python"
+
+# Every check ID this tool can emit -- used to validate --disable arguments so a
+# typo (e.g. "E99") is reported rather than silently ignored.
+KNOWN_CODES = frozenset(
+    [
+        "E000",  # syntax error
+        "E001",  # shebang
+        "E002",  # module docstring
+        "E003",  # __all__
+        "E004",  # subclass an AutoPkg base
+        "E005",  # import ProcessorError
+        "E006",  # __main__ guard
+        "E007",  # __main__ calls execute_shell()
+        "E010",  # class name matches filename / no class found
+        "E011",  # class listed in __all__
+        "E012",  # class docstring
+        "E013",  # description = __doc__
+        "E014",  # input_variables defined
+        "E015",  # input_variables is a dict literal
+        "E016",  # output_variables defined
+        "E017",  # output_variables is a dict literal
+        "E018",  # main() defined
+        "E019",  # main() docstring
+        "E020",  # input_variable description
+        "E021",  # input_variable required
+        "E022",  # output_variable description
+        "E023",  # redundant __doc__ = description
+        "W001",  # not an AutoPkg processor
+        "W002",  # file not found
+    ]
+)
 
 # Recognized AutoPkg base classes a processor may subclass (besides anything
 # imported directly from autopkglib*, and the repo-local SharedUtilityMethods).
@@ -588,12 +623,16 @@ def maybe_fix_redundant_doc_assign(path, proc):
     return [(assign.lineno, "E023", "removed redundant `__doc__ = description`")]
 
 
-def check_file(path, auto_fix=True):
+def check_file(path, auto_fix=True, disabled=frozenset()):
     """Check one file.
 
     Returns (issues, fixed), each a list of (lineno, check_id, message). When
     auto_fix is True, fixable issues (E001, E002, and E012+E013 together) are
     corrected in place and reported under `fixed` instead of `issues`.
+
+    `disabled` is a set of check IDs (e.g. {"E005", "E020"}) to skip entirely.
+    A disabled fixable check is neither auto-fixed (the file is not mutated) nor
+    reported; reporting of disabled codes is filtered out by check_files().
 
     The body is just orchestration: run/apply the auto-fixes (which mutate the
     file and re-parse), then concatenate the results of the pure check_* helpers.
@@ -635,7 +674,7 @@ def check_file(path, auto_fix=True):
     # --- E001: shebang (auto-fixable) ---
     lines = src.splitlines()
     if not lines or lines[0].rstrip() != EXPECTED_SHEBANG:
-        if auto_fix:
+        if auto_fix and "E001" not in disabled:
             apply_shebang_fix(path)
             fixed.append((1, "E001", f"set first line to `{EXPECTED_SHEBANG}`"))
             with open(path, encoding="utf-8", errors="replace") as handle:
@@ -645,7 +684,7 @@ def check_file(path, auto_fix=True):
             issues.append((1, "E001", f"first line should be `{EXPECTED_SHEBANG}`"))
 
     # --- E002: module docstring (auto-fixable when completely missing) ---
-    if auto_fix:
+    if auto_fix and "E002" not in disabled:
         fixed_entry, new_src = maybe_fix_module_docstring(path, tree, stem)
         if fixed_entry:
             fixed.append(fixed_entry)
@@ -664,13 +703,21 @@ def check_file(path, auto_fix=True):
         return sorted(issues), fixed
 
     # --- class-level auto-fixes; the first one that applies re-analyzes the
-    # now-fixed file, which lets fixes chain (e.g. E012/E013 then E023) ---
+    # now-fixed file, which lets fixes chain (e.g. E012/E013 then E023). A fixer
+    # is skipped (no mutation) when any code it would emit is disabled. ---
     if auto_fix:
-        for fixer in (maybe_fix_class_docstring, maybe_fix_redundant_doc_assign):
+        for fixer, codes in (
+            (maybe_fix_class_docstring, {"E012", "E013"}),
+            (maybe_fix_redundant_doc_assign, {"E023"}),
+        ):
+            if codes & disabled:
+                continue
             class_fixed = fixer(path, proc)
             if class_fixed:
                 fixed += class_fixed
-                more_issues, more_fixed = check_file(path, auto_fix=auto_fix)
+                more_issues, more_fixed = check_file(
+                    path, auto_fix=auto_fix, disabled=disabled
+                )
                 return more_issues, fixed + more_fixed
 
     # --- class-level checks ---
@@ -688,19 +735,23 @@ def check_file(path, auto_fix=True):
     return sorted(issues), fixed
 
 
-def check_files(paths, auto_fix=True):
+def check_files(paths, auto_fix=True, disabled=frozenset()):
     """Check several files and return a list of (path, issues, fixed) tuples.
 
-    Only `.py` paths are checked; anything else is skipped. This is the
-    programmatic entry point: it does no printing, so other Python code can call
-    it and consume the structured results directly. `main()` wraps it to print
-    and to compute a process exit code.
+    Only `.py` paths are checked; anything else is skipped. `disabled` is a set
+    of check IDs to skip entirely -- disabled codes are filtered out of both the
+    issues and fixed lists here, and check_file() avoids mutating files for
+    disabled fixable checks. This is the programmatic entry point: it does no
+    printing, so other Python code can call it and consume the structured
+    results directly. `main()` wraps it to print and to compute an exit code.
     """
     results = []
     for path in paths:
         if not path.endswith(".py"):
             continue
-        issues, fixed = check_file(path, auto_fix=auto_fix)
+        issues, fixed = check_file(path, auto_fix=auto_fix, disabled=disabled)
+        issues = [item for item in issues if item[1] not in disabled]
+        fixed = [item for item in fixed if item[1] not in disabled]
         results.append((path, issues, fixed))
     return results
 
@@ -714,14 +765,31 @@ def main(argv):
         default="yes",
         help="automatically fix fixable issues in place (default: yes)",
     )
+    parser.add_argument(
+        "--disable",
+        default="",
+        metavar="CODES",
+        help="comma-separated check IDs to skip entirely, e.g. --disable E005,E020",
+    )
     parser.add_argument("files", nargs="*", help="processor .py files to check")
     args = parser.parse_args(argv)
     auto_fix = args.auto_fix == "yes"
 
+    disabled = {
+        code.strip().upper() for code in args.disable.split(",") if code.strip()
+    }
+    unknown = disabled - KNOWN_CODES
+    if unknown:
+        print(
+            f"warning: ignoring unknown --disable code(s): {', '.join(sorted(unknown))}"
+        )
+
     issue_count = 0
     fix_count = 0
     warning_count = 0
-    for path, issues, fixed in check_files(args.files, auto_fix=auto_fix):
+    for path, issues, fixed in check_files(
+        args.files, auto_fix=auto_fix, disabled=disabled
+    ):
         for lineno, check_id, message in fixed:
             fix_count += 1
             print(f"{path}:{lineno}: [{check_id}] auto-fixed: {message}")
