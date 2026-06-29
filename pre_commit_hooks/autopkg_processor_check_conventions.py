@@ -10,10 +10,11 @@ Usage:
 
 --auto-fix (default: yes) corrects the fixable conventions in place. Currently
 auto-fixable: E001 (the shebang), E002 (a completely missing module-level
-docstring), and E012+E013 together (when a class has no docstring but sets
+docstring), E012+E013 together (when a class has no docstring but sets
 `description = "<str>"`, the string is promoted to the class docstring and
-`description` is set to `__doc__`). Auto-fixed files are rewritten and the hook
-still exits non-zero so the changes can be reviewed and re-staged.
+`description` is set to `__doc__`), and E023 (a redundant `__doc__ = description`
+left over once `description = __doc__` is set). Auto-fixed files are rewritten
+and the hook still exits non-zero so the changes can be reviewed and re-staged.
 
 A file can opt out of all checks with a top-of-file comment containing:
     # pre-commit-skip: processor-conventions
@@ -25,6 +26,7 @@ Exit codes:
 
 import argparse
 import ast
+import collections
 import os
 import sys
 
@@ -114,18 +116,31 @@ def apply_shebang_fix(path):
         handle.write(content)
 
 
-def pick_processor_class(tree, stem):
-    """Return the processor ClassDef, preferring the one named after the file.
+# The top-level facts the module-level checks operate on, gathered in one pass.
+ModuleInfo = collections.namedtuple(
+    "ModuleInfo",
+    ["all_names", "imports", "classes", "has_main_guard", "calls_execute_shell"],
+)
 
-    Falls back to the first class listed in `__all__`, then to the first class
-    defined in the module. Returns None if the module defines no classes.
+
+def scan_module(tree):
+    """Walk the module's top-level nodes once and collect the facts checks need.
+
+    Returns a ModuleInfo with:
+      all_names           list from `__all__`, or None if it is not declared
+      imports             names imported from any `autopkglib*` module
+      classes             {name: ClassDef} for every top-level class
+      has_main_guard      True if an `if __name__ == "__main__":` block exists
+      calls_execute_shell True if that block calls `.execute_shell()`
     """
-    classes = {}
     all_names = None
+    imports = set()
+    classes = {}
+    has_main_guard = False
+    calls_execute_shell = False
+
     for node in tree.body:
-        if isinstance(node, ast.ClassDef):
-            classes[node.name] = node
-        elif isinstance(node, ast.Assign):
+        if isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id == "__all__":
                     if isinstance(node.value, (ast.List, ast.Tuple)):
@@ -136,12 +151,68 @@ def pick_processor_class(tree, stem):
                         ]
                     else:
                         all_names = []
-    proc = classes.get(stem)
-    if proc is None and all_names:
-        proc = next((classes[n] for n in all_names if n in classes), None)
-    if proc is None and classes:
-        proc = next(iter(classes.values()))
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.startswith("autopkglib")
+        ):
+            imports |= {alias.name for alias in node.names}
+        elif isinstance(node, ast.ClassDef):
+            classes[node.name] = node
+        elif isinstance(node, ast.If):
+            test = node.test
+            if (
+                isinstance(test, ast.Compare)
+                and isinstance(test.left, ast.Name)
+                and test.left.id == "__name__"
+            ):
+                has_main_guard = True
+                for sub in ast.walk(node):
+                    if (
+                        isinstance(sub, ast.Call)
+                        and isinstance(sub.func, ast.Attribute)
+                        and sub.func.attr == "execute_shell"
+                    ):
+                        calls_execute_shell = True
+
+    return ModuleInfo(all_names, imports, classes, has_main_guard, calls_execute_shell)
+
+
+def pick_processor_class(info, stem):
+    """Return the processor ClassDef, preferring the one named after the file.
+
+    Falls back to the first class listed in `__all__`, then to the first class
+    defined in the module. Returns None if the module defines no classes.
+    """
+    proc = info.classes.get(stem)
+    if proc is None and info.all_names:
+        proc = next(
+            (info.classes[n] for n in info.all_names if n in info.classes), None
+        )
+    if proc is None and info.classes:
+        proc = next(iter(info.classes.values()))
     return proc
+
+
+def class_members(proc):
+    """Return (attrs, main_func) for a class.
+
+    attrs maps each simple-name class attribute to its assigned value node;
+    main_func is the `main` method's FunctionDef (or None).
+    """
+    attrs = {}
+    main_func = None
+    for item in proc.body:
+        if isinstance(item, ast.Assign):
+            for target in item.targets:
+                if isinstance(target, ast.Name):
+                    attrs[target.id] = item.value
+        elif (
+            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and item.name == "main"
+        ):
+            main_func = item
+    return attrs, main_func
 
 
 def apply_module_docstring_fix(path, classname):
@@ -185,6 +256,46 @@ def description_string_assign(proc):
     return None
 
 
+def redundant_doc_assign(proc):
+    """Return a redundant `__doc__ = description` Assign node, if present.
+
+    It is redundant only when the class also sets `description = __doc__` (our
+    convention): then `__doc__ = description` reduces to `__doc__ = __doc__`, a
+    no-op. Returns None when either statement is missing -- e.g. a class that
+    sets `description` to a plain string still needs `__doc__ = description` to
+    populate its docstring, so that case is left alone.
+    """
+    has_description_from_doc = False
+    doc_assign = None
+    for item in proc.body:
+        if not isinstance(item, ast.Assign):
+            continue
+        targets = [t.id for t in item.targets if isinstance(t, ast.Name)]
+        value_name = item.value.id if isinstance(item.value, ast.Name) else None
+        if "description" in targets and value_name == "__doc__":
+            has_description_from_doc = True
+        elif "__doc__" in targets and value_name == "description":
+            doc_assign = item
+    return doc_assign if (has_description_from_doc and doc_assign) else None
+
+
+def apply_remove_doc_assign_fix(path, assign):
+    """Delete a redundant `__doc__ = description` assignment's source line(s).
+
+    Also collapses a doubled blank line left where the statement used to be, so
+    the class body keeps a single blank separator.
+    """
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+    start = assign.lineno - 1
+    end = (assign.end_lineno or assign.lineno) - 1
+    del lines[start : end + 1]
+    if 0 < start < len(lines) and not lines[start - 1].strip() and not lines[start].strip():
+        del lines[start]
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+
+
 def apply_class_docstring_from_description_fix(path, assign):
     """Promote a `description = "<str>"` assignment to the class docstring.
 
@@ -207,133 +318,45 @@ def apply_class_docstring_from_description_fix(path, assign):
         handle.write("\n".join(lines))
 
 
-def check_file(path, auto_fix=True):
-    """Check one file.
+# --- individual checks -------------------------------------------------------
+# Each returns a (possibly empty) list of (lineno, check_id, message) tuples and
+# never mutates anything, so they can be read, tested, and reordered in
+# isolation. check_file just calls them in order and concatenates the results.
 
-    Returns (issues, fixed), each a list of (lineno, check_id, message). When
-    auto_fix is True, fixable issues (E001) are corrected in place and reported
-    under `fixed` instead of `issues`.
-    """
-    issues = []
-    fixed = []
-    stem = os.path.splitext(os.path.basename(path))[0]
-    with open(path, encoding="utf-8", errors="replace") as handle:
-        src = handle.read()
 
-    if SKIP_MARKER in src:
-        return issues, fixed
-
-    lines = src.splitlines()
-
-    # --- E001: shebang (auto-fixable) ---
-    if not lines or lines[0].rstrip() != EXPECTED_SHEBANG:
-        if auto_fix:
-            apply_shebang_fix(path)
-            fixed.append((1, "E001", f"set first line to `{EXPECTED_SHEBANG}`"))
-            with open(path, encoding="utf-8", errors="replace") as handle:
-                src = handle.read()
-            lines = src.splitlines()
-        else:
-            issues.append((1, "E001", f"first line should be `{EXPECTED_SHEBANG}`"))
-
-    try:
-        tree = ast.parse(src)
-    except SyntaxError as err:
-        return [(err.lineno or 1, "E000", f"syntax error: {err.msg}")], fixed
-
-    # --- E002: module docstring (auto-fixable when completely missing) ---
+def check_module_docstring(tree):
+    """E002: the module must have a plain-string docstring."""
     if not ast.get_docstring(tree):
-        # only auto-fix a genuinely absent docstring; an f-string docstring is a
-        # different problem (it needs a human to rewrite it as a plain string)
-        if auto_fix and not has_fstring_docstring(tree):
-            proc = pick_processor_class(tree, stem)
-            classname = proc.name if proc else stem
-            apply_module_docstring_fix(path, classname)
-            fixed.append(
-                (
-                    1,
-                    "E002",
-                    f'set module docstring to """See docstring for {classname} class"""',
-                )
-            )
-            with open(path, encoding="utf-8", errors="replace") as handle:
-                src = handle.read()
-            lines = src.splitlines()
-            tree = ast.parse(src)
-        else:
-            issues.append(docstring_issue(tree, 1, "E002", "module-level"))
+        return [docstring_issue(tree, 1, "E002", "module-level")]
+    return []
 
-    # --- scan top-level nodes ---
-    all_names = None
-    imports = set()
-    classes = {}
-    has_main_guard = False
-    calls_execute_shell = False
 
-    for node in tree.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "__all__":
-                    if isinstance(node.value, (ast.List, ast.Tuple)):
-                        all_names = [
-                            e.value
-                            for e in node.value.elts
-                            if isinstance(e, ast.Constant) and isinstance(e.value, str)
-                        ]
-                    else:
-                        all_names = []
-        elif (
-            isinstance(node, ast.ImportFrom)
-            and node.module
-            and node.module.startswith("autopkglib")
-        ):
-            imports |= {alias.name for alias in node.names}
-        elif isinstance(node, ast.ClassDef):
-            classes[node.name] = node
-        elif isinstance(node, ast.If):
-            test = node.test
-            if (
-                isinstance(test, ast.Compare)
-                and isinstance(test.left, ast.Name)
-                and test.left.id == "__name__"
-            ):
-                has_main_guard = True
-                for sub in ast.walk(node):
-                    if (
-                        isinstance(sub, ast.Call)
-                        and isinstance(sub.func, ast.Attribute)
-                        and sub.func.attr == "execute_shell"
-                    ):
-                        calls_execute_shell = True
+def check_all_declared(info):
+    """E003: the module must declare `__all__`."""
+    if info.all_names is None:
+        return [(1, "E003", "missing `__all__` declaration")]
+    return []
 
-    # --- E003: __all__ ---
-    if all_names is None:
-        issues.append((1, "E003", "missing `__all__` declaration"))
 
-    # --- E005: ProcessorError import (opinionated; convention even if unused) ---
-    if "ProcessorError" not in imports:
-        issues.append((1, "E005", "should import `ProcessorError` from autopkglib"))
+def check_processor_error_import(info):
+    """E005: `ProcessorError` should be imported from autopkglib (convention)."""
+    if "ProcessorError" not in info.imports:
+        return [(1, "E005", "should import `ProcessorError` from autopkglib")]
+    return []
 
-    # --- E006 / E007: __main__ guard ---
-    if not has_main_guard:
-        issues.append((1, "E006", 'missing `if __name__ == "__main__":` block'))
-    elif not calls_execute_shell:
-        issues.append(
-            (1, "E007", "`__main__` block should call `PROCESSOR.execute_shell()`")
-        )
 
-    # --- pick the processor class: prefer one named after the file ---
-    proc = classes.get(stem)
-    if proc is None and all_names:
-        proc = next((classes[n] for n in all_names if n in classes), None)
-    if proc is None and classes:
-        proc = next(iter(classes.values()))
+def check_main_guard(info):
+    """E006/E007: a `__main__` guard must exist and call `.execute_shell()`."""
+    if not info.has_main_guard:
+        return [(1, "E006", 'missing `if __name__ == "__main__":` block')]
+    if not info.calls_execute_shell:
+        return [(1, "E007", "`__main__` block should call `PROCESSOR.execute_shell()`")]
+    return []
 
-    if proc is None:
-        issues.append((1, "E010", "no class found in this processor file"))
-        return sorted(issues), fixed
 
-    # --- E010 / E011: class naming ---
+def check_class_naming(proc, stem, info):
+    """E010/E011: class name should match the filename and be listed in `__all__`."""
+    issues = []
     if proc.name != stem:
         issues.append(
             (
@@ -342,74 +365,53 @@ def check_file(path, auto_fix=True):
                 f"class `{proc.name}` should be named `{stem}` to match the filename",
             )
         )
-    if all_names is not None and proc.name not in all_names:
+    if info.all_names is not None and proc.name not in info.all_names:
         issues.append(
             (proc.lineno, "E011", f"`{proc.name}` should be listed in `__all__`")
         )
+    return issues
 
-    # --- E004: must subclass an AutoPkg processor base ---
-    recognized = KNOWN_BASES | imports
+
+def check_base_class(proc, info):
+    """E004: the class must subclass a recognized AutoPkg Processor base."""
+    recognized = KNOWN_BASES | info.imports
     if not (set(base_names(proc)) & recognized):
-        issues.append(
+        return [
             (
                 proc.lineno,
                 "E004",
                 f"`{proc.name}` should subclass an AutoPkg Processor base (e.g. Processor)",
             )
-        )
+        ]
+    return []
 
-    # --- collect class attributes/methods ---
-    attrs = {}
-    main_func = None
-    for item in proc.body:
-        if isinstance(item, ast.Assign):
-            for target in item.targets:
-                if isinstance(target, ast.Name):
-                    attrs[target.id] = item.value
-        elif (
-            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and item.name == "main"
-        ):
-            main_func = item
 
-    # --- combined auto-fix for E012 + E013: when the class has no docstring but
-    # sets `description = "<str>"`, promote that string to the class docstring
-    # and set `description = __doc__`, then re-analyze the now-fixed file ---
-    if auto_fix and not ast.get_docstring(proc):
-        desc_assign = description_string_assign(proc)
-        if desc_assign is not None:
-            apply_class_docstring_from_description_fix(path, desc_assign)
-            fixed.append(
-                (
-                    proc.lineno,
-                    "E012",
-                    f"promoted `description` string to the `{proc.name}` class docstring",
-                )
-            )
-            fixed.append((desc_assign.lineno, "E013", "set `description = __doc__`"))
-            more_issues, more_fixed = check_file(path, auto_fix=auto_fix)
-            return more_issues, fixed + more_fixed
-
-    # --- E012: class docstring ---
+def check_class_docstring(proc):
+    """E012: the class must have a plain-string docstring."""
     if not ast.get_docstring(proc):
-        issues.append(
-            docstring_issue(proc, proc.lineno, "E012", f"class `{proc.name}`")
-        )
+        return [docstring_issue(proc, proc.lineno, "E012", f"class `{proc.name}`")]
+    return []
 
-    # --- E013: description = __doc__ (use the class docstring as the description) ---
+
+def check_description(proc, attrs):
+    """E013: `description` should be `__doc__` (the class docstring is the source)."""
     desc = attrs.get("description")
     if desc is None:
-        issues.append((proc.lineno, "E013", "class should set `description = __doc__`"))
-    elif not (isinstance(desc, ast.Name) and desc.id == "__doc__"):
-        issues.append(
+        return [(proc.lineno, "E013", "class should set `description = __doc__`")]
+    if not (isinstance(desc, ast.Name) and desc.id == "__doc__"):
+        return [
             (
                 getattr(desc, "lineno", proc.lineno),
                 "E013",
                 "`description` should be `__doc__` (write the description as the class docstring)",
             )
-        )
+        ]
+    return []
 
-    # --- E014-E017: input_variables / output_variables ---
+
+def check_variable_attrs(proc, attrs):
+    """E014-E017: input_variables/output_variables must exist as dict literals."""
+    issues = []
     for attr_name, miss_id, type_id in (
         ("input_variables", "E014", "E015"),
         ("output_variables", "E016", "E017"),
@@ -420,52 +422,219 @@ def check_file(path, auto_fix=True):
             issues.append(
                 (proc.lineno, type_id, f"`{attr_name}` should be a dict literal")
             )
+    return issues
 
-    # --- E020 / E021: input_variables entries ---
-    if isinstance(attrs.get("input_variables"), ast.Dict):
-        for var_name, spec in dict_entries(attrs["input_variables"]):
-            if not isinstance(spec, ast.Dict):
-                continue
-            if not dict_has_key(spec, "description"):
-                issues.append(
-                    (
-                        spec.lineno,
-                        "E020",
-                        f"input_variable `{var_name}` missing `description`",
-                    )
-                )
-            if not dict_has_key(spec, "required"):
-                issues.append(
-                    (
-                        spec.lineno,
-                        "E021",
-                        f"input_variable `{var_name}` should declare `required`",
-                    )
-                )
 
-    # --- E022: output_variables entries ---
-    if isinstance(attrs.get("output_variables"), ast.Dict):
-        for var_name, spec in dict_entries(attrs["output_variables"]):
-            if isinstance(spec, ast.Dict) and not dict_has_key(spec, "description"):
-                issues.append(
-                    (
-                        spec.lineno,
-                        "E022",
-                        f"output_variable `{var_name}` missing `description`",
-                    )
+def check_input_variable_entries(attrs):
+    """E020/E021: each input_variable entry needs `description` and `required`."""
+    issues = []
+    node = attrs.get("input_variables")
+    if not isinstance(node, ast.Dict):
+        return issues
+    for var_name, spec in dict_entries(node):
+        if not isinstance(spec, ast.Dict):
+            continue
+        if not dict_has_key(spec, "description"):
+            issues.append(
+                (
+                    spec.lineno,
+                    "E020",
+                    f"input_variable `{var_name}` missing `description`",
                 )
+            )
+        if not dict_has_key(spec, "required"):
+            issues.append(
+                (
+                    spec.lineno,
+                    "E021",
+                    f"input_variable `{var_name}` should declare `required`",
+                )
+            )
+    return issues
 
-    # --- E018 / E019: main() method ---
+
+def check_output_variable_entries(attrs):
+    """E022: each output_variable entry needs a `description`."""
+    issues = []
+    node = attrs.get("output_variables")
+    if not isinstance(node, ast.Dict):
+        return issues
+    for var_name, spec in dict_entries(node):
+        if isinstance(spec, ast.Dict) and not dict_has_key(spec, "description"):
+            issues.append(
+                (
+                    spec.lineno,
+                    "E022",
+                    f"output_variable `{var_name}` missing `description`",
+                )
+            )
+    return issues
+
+
+def check_main_method(proc, main_func):
+    """E018/E019: the class must define `main()` and it must have a docstring."""
     if main_func is None:
-        issues.append(
+        return [
             (
                 proc.lineno,
                 "E018",
                 f"class `{proc.name}` should define a `main()` method",
             )
-        )
-    elif not ast.get_docstring(main_func):
-        issues.append(docstring_issue(main_func, main_func.lineno, "E019", "`main()`"))
+        ]
+    if not ast.get_docstring(main_func):
+        return [docstring_issue(main_func, main_func.lineno, "E019", "`main()`")]
+    return []
+
+
+def check_redundant_doc_assign(proc):
+    """E023: drop `__doc__ = description` when `description = __doc__` is set."""
+    assign = redundant_doc_assign(proc)
+    if assign is not None:
+        return [
+            (
+                assign.lineno,
+                "E023",
+                "redundant `__doc__ = description` (already set via `description = __doc__`)",
+            )
+        ]
+    return []
+
+
+# --- multi-step auto-fixes ---------------------------------------------------
+# These mutate the file on disk, so they are kept apart from the pure checks.
+
+
+def maybe_fix_module_docstring(path, tree, stem):
+    """Auto-fix a completely missing module docstring (E002).
+
+    Returns (fixed_entry, new_src), or (None, None) when no fix applies. An
+    f-string "docstring" is intentionally left for a human to rewrite.
+    """
+    if ast.get_docstring(tree) or has_fstring_docstring(tree):
+        return None, None
+    proc = pick_processor_class(scan_module(tree), stem)
+    classname = proc.name if proc else stem
+    apply_module_docstring_fix(path, classname)
+    fixed_entry = (
+        1,
+        "E002",
+        f'set module docstring to """See docstring for {classname} class"""',
+    )
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        return fixed_entry, handle.read()
+
+
+def maybe_fix_class_docstring(path, proc):
+    """Auto-fix E012+E013 together when convertible.
+
+    When the class has no docstring but sets `description = "<str>"`, promote the
+    string to the class docstring and set `description = __doc__`. Returns the
+    list of fixed entries (empty if nothing was fixed).
+    """
+    if ast.get_docstring(proc):
+        return []
+    desc_assign = description_string_assign(proc)
+    if desc_assign is None:
+        return []
+    apply_class_docstring_from_description_fix(path, desc_assign)
+    return [
+        (
+            proc.lineno,
+            "E012",
+            f"promoted `description` string to the `{proc.name}` class docstring",
+        ),
+        (desc_assign.lineno, "E013", "set `description = __doc__`"),
+    ]
+
+
+def maybe_fix_redundant_doc_assign(path, proc):
+    """Auto-fix E023: remove a redundant `__doc__ = description` assignment.
+
+    Returns the list of fixed entries (empty if nothing was fixed).
+    """
+    assign = redundant_doc_assign(proc)
+    if assign is None:
+        return []
+    apply_remove_doc_assign_fix(path, assign)
+    return [(assign.lineno, "E023", "removed redundant `__doc__ = description`")]
+
+
+def check_file(path, auto_fix=True):
+    """Check one file.
+
+    Returns (issues, fixed), each a list of (lineno, check_id, message). When
+    auto_fix is True, fixable issues (E001, E002, and E012+E013 together) are
+    corrected in place and reported under `fixed` instead of `issues`.
+
+    The body is just orchestration: run/apply the auto-fixes (which mutate the
+    file and re-parse), then concatenate the results of the pure check_* helpers.
+    """
+    fixed = []
+    stem = os.path.splitext(os.path.basename(path))[0]
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        src = handle.read()
+
+    if SKIP_MARKER in src:
+        return [], fixed
+
+    issues = []
+
+    # --- E001: shebang (auto-fixable) ---
+    lines = src.splitlines()
+    if not lines or lines[0].rstrip() != EXPECTED_SHEBANG:
+        if auto_fix:
+            apply_shebang_fix(path)
+            fixed.append((1, "E001", f"set first line to `{EXPECTED_SHEBANG}`"))
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                src = handle.read()
+        else:
+            issues.append((1, "E001", f"first line should be `{EXPECTED_SHEBANG}`"))
+
+    try:
+        tree = ast.parse(src)
+    except SyntaxError as err:
+        return [(err.lineno or 1, "E000", f"syntax error: {err.msg}")], fixed
+
+    # --- E002: module docstring (auto-fixable when completely missing) ---
+    if auto_fix:
+        fixed_entry, new_src = maybe_fix_module_docstring(path, tree, stem)
+        if fixed_entry:
+            fixed.append(fixed_entry)
+            tree = ast.parse(new_src)
+    issues += check_module_docstring(tree)
+
+    # --- module-level checks ---
+    info = scan_module(tree)
+    issues += check_all_declared(info)  # E003
+    issues += check_processor_error_import(info)  # E005
+    issues += check_main_guard(info)  # E006 / E007
+
+    proc = pick_processor_class(info, stem)
+    if proc is None:
+        issues.append((1, "E010", "no class found in this processor file"))
+        return sorted(issues), fixed
+
+    # --- class-level auto-fixes; the first one that applies re-analyzes the
+    # now-fixed file, which lets fixes chain (e.g. E012/E013 then E023) ---
+    if auto_fix:
+        for fixer in (maybe_fix_class_docstring, maybe_fix_redundant_doc_assign):
+            class_fixed = fixer(path, proc)
+            if class_fixed:
+                fixed += class_fixed
+                more_issues, more_fixed = check_file(path, auto_fix=auto_fix)
+                return more_issues, fixed + more_fixed
+
+    # --- class-level checks ---
+    attrs, main_func = class_members(proc)
+    issues += check_class_naming(proc, stem, info)  # E010 / E011
+    issues += check_base_class(proc, info)  # E004
+    issues += check_class_docstring(proc)  # E012
+    issues += check_description(proc, attrs)  # E013
+    issues += check_variable_attrs(proc, attrs)  # E014-E017
+    issues += check_input_variable_entries(attrs)  # E020 / E021
+    issues += check_output_variable_entries(attrs)  # E022
+    issues += check_main_method(proc, main_func)  # E018 / E019
+    issues += check_redundant_doc_assign(proc)  # E023
 
     return sorted(issues), fixed
 
