@@ -600,6 +600,12 @@ def check_file(path, auto_fix=True):
     """
     fixed = []
     stem = os.path.splitext(os.path.basename(path))[0]
+
+    # --- W002: a path that does not exist (or is not a file) is skipped with a
+    # warning rather than crashing -- pre-commit may pass a just-deleted file ---
+    if not os.path.isfile(path):
+        return [(1, "W002", "file not found; skipping")], fixed
+
     with open(path, encoding="utf-8", errors="replace") as handle:
         src = handle.read()
 
@@ -682,6 +688,23 @@ def check_file(path, auto_fix=True):
     return sorted(issues), fixed
 
 
+def check_files(paths, auto_fix=True):
+    """Check several files and return a list of (path, issues, fixed) tuples.
+
+    Only `.py` paths are checked; anything else is skipped. This is the
+    programmatic entry point: it does no printing, so other Python code can call
+    it and consume the structured results directly. `main()` wraps it to print
+    and to compute a process exit code.
+    """
+    results = []
+    for path in paths:
+        if not path.endswith(".py"):
+            continue
+        issues, fixed = check_file(path, auto_fix=auto_fix)
+        results.append((path, issues, fixed))
+    return results
+
+
 def main(argv):
     """Execution starts here."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -695,12 +718,10 @@ def main(argv):
     args = parser.parse_args(argv)
     auto_fix = args.auto_fix == "yes"
 
-    paths = [f for f in args.files if f.endswith(".py")]
     issue_count = 0
     fix_count = 0
     warning_count = 0
-    for path in paths:
-        issues, fixed = check_file(path, auto_fix=auto_fix)
+    for path, issues, fixed in check_files(args.files, auto_fix=auto_fix):
         for lineno, check_id, message in fixed:
             fix_count += 1
             print(f"{path}:{lineno}: [{check_id}] auto-fixed: {message}")
@@ -716,7 +737,7 @@ def main(argv):
     if fix_count:
         print(f"\nauto-fixed {fix_count} issue(s); review and re-stage the changes.")
     if warning_count:
-        print(f"{warning_count} file(s) skipped (not AutoPkg processors).")
+        print(f"{warning_count} file(s) skipped (see warnings above).")
     if issue_count:
         print(f"{issue_count} remaining processor-convention issue(s).")
     # non-zero if anything was fixed (so the user re-stages) or any real issue
