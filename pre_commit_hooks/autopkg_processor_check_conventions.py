@@ -27,9 +27,11 @@ exits non-zero so the changes can be reviewed and re-staged.
 
 Non-fixable opinionated checks include: E020 (every input_variable needs a
 non-empty `description`) and E029 (every declared output_variable must be set via
-self.env). E030 allows AutoPkg built-ins, ALL_CAPS external config/credential
-keys (e.g. BES_PASSWORD), keys the processor writes itself, and get() fallback
-defaults. W003 warns when
+self.env, unless it is also an input_variable -- declaring an input as an output
+too is a deliberate way to have AutoPkg re-display it in verbose runs). E030
+allows AutoPkg built-ins, ALL_CAPS external config/credential keys (e.g.
+BES_PASSWORD), keys the processor writes itself, and get() fallback defaults.
+W003 warns when
 the `__main__` guard is not the last statement in the file. A `print(...)` call
 that E028 cannot safely rewrite (multiple args, file=/sep=/end= kwargs, or a
 staticmethod) stays reported for a human to fix.
@@ -890,6 +892,11 @@ def check_outputs_assigned(proc, attrs):
 
     Suppressed entirely when the class writes self.env with a dynamic key (or
     .update()/.setdefault()), since the set of keys then cannot be proven.
+
+    A key that is also an input_variable is exempt: declaring it as an output as
+    well is a deliberate convention -- it makes AutoPkg re-display the value in
+    verbose runs (showing whether the processor changed it or left it as-is),
+    even though the processor never reassigns it via self.env.
     """
     node = attrs.get("output_variables")
     if not isinstance(node, ast.Dict):
@@ -897,16 +904,21 @@ def check_outputs_assigned(proc, attrs):
     writes_static, writes_dynamic, _ = class_env_usage(proc)
     if writes_dynamic:
         return []
+    inp = attrs.get("input_variables")
+    input_keys = (
+        {key for key, _ in dict_entries(inp)} if isinstance(inp, ast.Dict) else set()
+    )
     issues = []
     for var_name, spec in dict_entries(node):
-        if var_name not in writes_static:
-            issues.append(
-                (
-                    getattr(spec, "lineno", proc.lineno),
-                    "E029",
-                    f"output_variable `{var_name}` is declared but never set via self.env",
-                )
+        if var_name in writes_static or var_name in input_keys:
+            continue
+        issues.append(
+            (
+                getattr(spec, "lineno", proc.lineno),
+                "E029",
+                f"output_variable `{var_name}` is declared but never set via self.env",
             )
+        )
     return issues
 
 
