@@ -14,7 +14,11 @@ fixable check is neither auto-fixed nor reported.
 
 --auto-fix (default: yes) corrects the fixable conventions in place. Currently
 auto-fixable: E001 (the shebang), E002 (a completely missing module-level
-docstring), E006/E007 (the `__main__` guard -- added when missing, rewritten to
+docstring), E003 (a missing `__all__`, added after the imports as
+`__all__ = ["<Class>"]` -- only when the file has a class), E010 (a file with no
+class at all gets a minimal processor class stub named after the file, which then
+chains E003/E006/etc.), E006/E007 (the `__main__` guard -- added when missing,
+rewritten to
 the canonical `PROCESSOR = <Class>()` / `PROCESSOR.execute_shell()` form when
 not), E012+E013 together (when a class has no docstring but sets
 `description = "<str>"`, the string is promoted to the class docstring and
@@ -26,13 +30,17 @@ E020 so a human fills it in). Auto-fixed files are rewritten and the hook still
 exits non-zero so the changes can be reviewed and re-staged.
 
 Non-fixable opinionated checks include: E020 (every input_variable needs a
-non-empty `description`) and E029 (every declared output_variable must be set via
+non-empty `description`), E024 (the class docstring is the processor's primary
+documentation -- a trivial one-liner or generated stub is rejected so it gets
+expanded and maintained), and E029 (every declared output_variable must be set via
 self.env, unless it is also an input_variable -- declaring an input as an output
 too is a deliberate way to have AutoPkg re-display it in verbose runs). E030
 allows AutoPkg built-ins, ALL_CAPS external config/credential keys (e.g.
 BES_PASSWORD), keys the processor writes itself, and get() fallback defaults.
-W003 warns when
-the `__main__` guard is not the last statement in the file. A `print(...)` call
+W003 warns when the `__main__` guard is not the last statement in the file. W004
+warns when the processor writes a `self.env[...]` key that is not declared in
+output_variables (exempting keys it also reads, ALL_CAPS/built-in control vars,
+and any write carrying the `# output-undeclared-ok` marker). A `print(...)` call
 that E028 cannot safely rewrite (multiple args, file=/sep=/end= kwargs, or a
 staticmethod) stays reported for a human to fix.
 
@@ -57,6 +65,17 @@ import sys
 
 SKIP_MARKER = "pre-commit-skip: processor-conventions"
 EXPECTED_SHEBANG = "#!/usr/local/autopkg/python"
+
+# Inline marker (a trailing comment) that exempts a single `self.env[...] = ...`
+# write from W004 -- for values intentionally not declared as outputs, e.g. very
+# large strings (file_base64, content_string).
+OUTPUT_UNDECLARED_MARKER = "output-undeclared-ok"
+
+# A class docstring is the processor's primary documentation (AutoPkg surfaces it
+# as the processor description), so a trivial one-liner is rejected by E024. This
+# is the minimum stripped length; the shortest real docstring in the repo is ~65
+# characters, so 40 cleanly separates genuine descriptions from stub placeholders.
+MIN_CLASS_DOCSTRING_LEN = 40
 
 # Every check ID this tool can emit -- used to validate --disable arguments so a
 # typo (e.g. "E99") is reported rather than silently ignored.
@@ -84,12 +103,14 @@ KNOWN_CODES = frozenset(
         "E021",  # input_variable required
         "E022",  # output_variable description
         "E023",  # redundant __doc__ = description
+        "E024",  # class docstring too brief (insufficient documentation)
         "E028",  # print() used instead of self.output()
         "E029",  # output_variable declared but never set
         "E030",  # reads an undeclared env key
         "W001",  # not an AutoPkg processor
         "W002",  # file not found
         "W003",  # __main__ guard not at end of file
+        "W004",  # writes an env key not declared in output_variables
     ]
 )
 
@@ -119,6 +140,7 @@ AUTOPKG_BUILTINS = frozenset(
         "last_modified",
         "etag",
         "download_info",
+        "stop_processing_recipe",
         "MUNKI_REPO",
         "munki_repo",
         "pkg_repo_dir",
@@ -682,6 +704,33 @@ def check_class_docstring(proc):
     return []
 
 
+def check_class_docstring_sufficient(proc):
+    """E024: the class docstring must actually document the processor.
+
+    The class docstring is a processor's primary documentation -- AutoPkg shows
+    it as the processor description (via `description = __doc__`). A trivial
+    one-liner or the generated `"<Class> processor."` stub is rejected so it gets
+    expanded and kept current. (E012 handles a missing docstring.)
+    """
+    doc = ast.get_docstring(proc)
+    if doc is None:
+        return []
+    stripped = doc.strip()
+    is_stub = stripped.rstrip(".").strip().lower() == f"{proc.name.lower()} processor"
+    if len(stripped) < MIN_CLASS_DOCSTRING_LEN or is_stub:
+        return [
+            (
+                proc.lineno,
+                "E024",
+                f"class `{proc.name}` docstring is too brief; it is this "
+                "processor's primary documentation (AutoPkg shows it as the "
+                "description) -- expand it to describe what the processor does, "
+                "its input_variables, and its output_variables",
+            )
+        ]
+    return []
+
+
 def check_description(proc, attrs):
     """E013: `description` should be `__doc__` (the class docstring is the source)."""
     desc = attrs.get("description")
@@ -922,6 +971,58 @@ def check_outputs_assigned(proc, attrs):
     return issues
 
 
+def check_outputs_declared(proc, attrs, source_lines):
+    """W004 (warning): a `self.env["k"] = ...` write whose key is not an output.
+
+    A value written to self.env but not declared in output_variables is invisible
+    to recipe authors. This is a warning, not an error, because some writes are
+    intentionally undeclared. Exempt: keys in output_variables or input_variables,
+    ALL_CAPS config/credentials, AUTOPKG_BUILTINS control vars (e.g.
+    stop_processing_recipe), keys the processor also reads (internal state such as
+    a cached requests_session), and any write whose line carries the
+    `# output-undeclared-ok` marker (for deliberately undeclared large values).
+    """
+    out = attrs.get("output_variables")
+    inp = attrs.get("input_variables")
+    out_keys = (
+        {key for key, _ in dict_entries(out)} if isinstance(out, ast.Dict) else set()
+    )
+    inp_keys = (
+        {key for key, _ in dict_entries(inp)} if isinstance(inp, ast.Dict) else set()
+    )
+    _, _, reads = class_env_usage(proc)
+    read_keys = {key for key, _ in reads}
+    exempt = out_keys | inp_keys | read_keys | AUTOPKG_BUILTINS
+
+    issues = []
+    seen = set()
+    for node in ast.walk(proc):
+        if not (
+            isinstance(node, ast.Subscript)
+            and _is_self_env(node.value)
+            and isinstance(node.ctx, ast.Store)
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+        ):
+            continue
+        key = node.slice.value
+        if key in seen or key in exempt or key.isupper():
+            continue
+        # the marker may sit on the write's own line or the line directly above it
+        context = source_lines[max(0, node.lineno - 2) : node.lineno]
+        if any(OUTPUT_UNDECLARED_MARKER in line for line in context):
+            continue
+        seen.add(key)
+        issues.append(
+            (
+                node.lineno,
+                "W004",
+                f"writes env key `{key}` not declared in output_variables",
+            )
+        )
+    return issues
+
+
 def undeclared_env_reads(proc, attrs):
     """Return [(key, lineno), ...] for env reads that should be declared inputs.
 
@@ -1105,6 +1206,64 @@ def maybe_fix_print(path, proc, info):
     ]
 
 
+def maybe_fix_all_declaration(path, proc, info):
+    """Auto-fix E003: add `__all__ = ["<Class>"]` after the imports.
+
+    Inserted one blank line below the last top-level import, matching the repo
+    convention. Requires a processor class (proc), so a file with no class is not
+    fixable and stays reported. Returns the list of fixed entries.
+    """
+    if info.all_names is not None:
+        return []
+    with open(path, encoding="utf-8") as handle:
+        src = handle.read()
+    last_import = None
+    for node in ast.parse(src).body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            last_import = node
+    if last_import is None:
+        return []
+    insert_at = last_import.end_lineno or last_import.lineno
+    lines = src.split("\n")
+    lines[insert_at:insert_at] = ["", f'__all__ = ["{proc.name}"]']
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+    return [(insert_at + 2, "E003", f'added `__all__ = ["{proc.name}"]`')]
+
+
+def maybe_fix_create_class(path, stem):
+    """Auto-fix E010 (no class found): append a minimal processor class stub.
+
+    The class is named after the file's basename and is a complete, valid
+    processor skeleton, so the re-analysis pass can chain the remaining fixes
+    (E003 `__all__`, E006 `__main__` guard). Returns the fixed entry, or None
+    when the basename is not a valid Python identifier (so it stays reported).
+    """
+    if not stem.isidentifier():
+        return None
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+    while lines and lines[-1].strip() == "":
+        lines.pop()
+    class_line = len(lines) + 3  # after the two blank separator lines
+    lines += [
+        "",
+        "",
+        f"class {stem}(Processor):",
+        f'    """{stem} processor."""',
+        "",
+        "    description = __doc__",
+        "    input_variables = {}",
+        "    output_variables = {}",
+        "",
+        "    def main(self):",
+        '        """Execution starts here."""',
+    ]
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+    return (class_line, "E010", f"created processor class `{stem}`")
+
+
 def maybe_fix_main_guard(path, proc, info):
     """Auto-fix E006/E007: ensure the canonical `__main__` guard exists.
 
@@ -1196,6 +1355,16 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
 
     proc = pick_processor_class(info, stem)
     if proc is None:
+        # E010 (no class): auto-fixable by creating a stub class named for the
+        # file; the re-analysis then chains the remaining fixes (E003, E006, ...).
+        if auto_fix and "E010" not in disabled:
+            class_fixed = maybe_fix_create_class(path, stem)
+            if class_fixed:
+                fixed.append(class_fixed)
+                more_issues, more_fixed = check_file(
+                    path, auto_fix=auto_fix, disabled=disabled
+                )
+                return more_issues, fixed + more_fixed
         issues.append((1, "E010", "no class found in this processor file"))
         return sorted(issues), fixed
 
@@ -1204,6 +1373,7 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
     # is skipped (no mutation) when any code it would emit is disabled. ---
     if auto_fix:
         for fixer, codes in (
+            (maybe_fix_all_declaration, {"E003"}),
             (maybe_fix_class_docstring, {"E012", "E013"}),
             (maybe_fix_redundant_doc_assign, {"E023"}),
             (maybe_fix_main_guard, {"E006", "E007"}),
@@ -1225,6 +1395,7 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
     issues += check_class_naming(proc, stem, info)  # E010 / E011
     issues += check_base_class(proc, info)  # E004
     issues += check_class_docstring(proc)  # E012
+    issues += check_class_docstring_sufficient(proc)  # E024
     issues += check_description(proc, attrs)  # E013
     issues += check_variable_attrs(proc, attrs)  # E014-E017
     issues += check_input_variable_entries(attrs)  # E020 / E021
@@ -1235,6 +1406,7 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
     issues += check_no_print(proc)  # E028
     issues += check_outputs_assigned(proc, attrs)  # E029
     issues += check_inputs_declared(proc, attrs)  # E030
+    issues += check_outputs_declared(proc, attrs, src.splitlines())  # W004
 
     return sorted(issues), fixed
 
