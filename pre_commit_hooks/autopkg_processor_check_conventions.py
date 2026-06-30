@@ -271,11 +271,11 @@ def has_header_comment(lines, doc_lineno):
     return any(line.lstrip().startswith("#") for line in lines[1 : doc_lineno - 1])
 
 
-def git_config_user_name():
-    """Return `git config user.name`, or "" if unavailable."""
+def git_config(key):
+    """Return `git config <key>`, or "" if unavailable."""
     try:
         result = subprocess.run(
-            ["git", "config", "user.name"],
+            ["git", "config", key],
             capture_output=True,
             text=True,
             timeout=5,
@@ -286,10 +286,20 @@ def git_config_user_name():
         return ""
 
 
+def git_config_user_name():
+    """Return `git config user.name`, or "" if unavailable."""
+    return git_config("user.name")
+
+
 def git_created_by(path):
     """Return (author, year) for `path`'s creation.
 
     Uses the original commit that added the file (author name + author-date year).
+    If that commit's author email matches the current git config email but the
+    name differs, the current config name is used instead -- i.e. the same person
+    committing under a different name spelling (jgstew vs JGStew) is normalized to
+    their current canonical name, while the original creation year is kept.
+
     Falls back to the current git user and current year for a new or untracked
     file that has no creating commit yet. (`--follow` is intentionally omitted: it
     is incompatible with `--reverse --diff-filter=A` and yields no output.)
@@ -301,7 +311,7 @@ def git_created_by(path):
                 "log",
                 "--reverse",
                 "--diff-filter=A",
-                "--format=%an%x09%ad",
+                "--format=%an%x09%ae%x09%ad",
                 "--date=format:%Y",
                 "--",
                 path,
@@ -311,11 +321,20 @@ def git_created_by(path):
             timeout=5,
             check=False,
         )
-        first = next((ln for ln in result.stdout.splitlines() if "\t" in ln), "")
+        first = next(
+            (ln for ln in result.stdout.splitlines() if ln.count("\t") >= 2), ""
+        )
         if first:
-            name, year = first.split("\t", 1)
-            if name.strip() and year.strip():
-                return name.strip(), year.strip()
+            name, email, year = (part.strip() for part in first.split("\t", 2))
+            if name and year:
+                current_email = git_config("user.email")
+                current_name = git_config_user_name()
+                same_person = (
+                    current_email and email and email.lower() == current_email.lower()
+                )
+                if same_person and current_name and name != current_name:
+                    name = current_name
+                return name, year
     except (OSError, subprocess.SubprocessError):
         pass
     return (git_config_user_name() or "Unknown", str(datetime.date.today().year))
