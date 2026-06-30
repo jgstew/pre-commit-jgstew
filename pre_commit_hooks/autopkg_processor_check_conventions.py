@@ -19,14 +19,17 @@ the canonical `PROCESSOR = <Class>()` / `PROCESSOR.execute_shell()` form when
 not), E012+E013 together (when a class has no docstring but sets
 `description = "<str>"`, the string is promoted to the class docstring and
 `description` is set to `__doc__`), E023 (a redundant `__doc__ = description`
-left over once `description = __doc__` is set), and E028 (a simple `print(x)`
-inside a processor method is rewritten to `self.output(x, 3)`). Auto-fixed files
-are rewritten and the hook still exits non-zero so the changes can be reviewed
-and re-staged.
+left over once `description = __doc__` is set), E028 (a simple `print(x)` inside
+a processor method is rewritten to `self.output(x, 3)`), and E030 (an undeclared
+env key is added to input_variables with a blank description -- which then trips
+E020 so a human fills it in). Auto-fixed files are rewritten and the hook still
+exits non-zero so the changes can be reviewed and re-staged.
 
-Non-fixable opinionated checks include: E029 (every declared output_variable
-must be set via self.env) and E030 (every env key the processor reads must be
-declared in input_variables, unless it is an AutoPkg built-in). W003 warns when
+Non-fixable opinionated checks include: E020 (every input_variable needs a
+non-empty `description`) and E029 (every declared output_variable must be set via
+self.env). E030 allows AutoPkg built-ins, ALL_CAPS external config/credential
+keys (e.g. BES_PASSWORD), keys the processor writes itself, and get() fallback
+defaults. W003 warns when
 the `__main__` guard is not the last statement in the file. A `print(...)` call
 that E028 cannot safely rewrite (multiple args, file=/sep=/end= kwargs, or a
 staticmethod) stays reported for a human to fix.
@@ -184,6 +187,23 @@ def dict_entries(node):
 def dict_has_key(node, name):
     """True if ast.Dict literal has a string key `name`."""
     return any(k == name for k, _ in dict_entries(node))
+
+
+def dict_get_value(node, name):
+    """Return the value node for string key `name` in an ast.Dict, or None."""
+    for key, value in dict_entries(node):
+        if key == name:
+            return value
+    return None
+
+
+def is_blank_string(node):
+    """True if `node` is a string constant that is empty or only whitespace."""
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and not node.value.strip()
+    )
 
 
 def apply_shebang_fix(path):
@@ -422,6 +442,50 @@ def apply_class_docstring_from_description_fix(path, assign):
         handle.write("\n".join(lines))
 
 
+def apply_add_input_vars_fix(path, base_indent, dict_node, keys):
+    """Add `keys` to an input_variables dict, each with a blank description.
+
+    Each entry is `"<key>": {"required": False, "description": ""}`. The blank
+    description is intentional: it is reported by E020 on the next run so a human
+    fills it in. New entries are inserted right after the opening `{` (so no
+    dependency on the existing last entry's trailing comma); an empty `{}` dict is
+    expanded to a multi-line one. Returns True if applied, False if the dict shape
+    is one this fixer will not touch (e.g. a single-line non-empty dict).
+    """
+    with open(path, encoding="utf-8") as handle:
+        src = handle.read()
+    entry_indent = " " * (base_indent + 4)
+    val_indent = " " * (base_indent + 8)
+    block = []
+    for key in keys:
+        block += [
+            f'{entry_indent}"{key}": {{',
+            f'{val_indent}"required": False,',
+            f'{val_indent}"description": "",',
+            f"{entry_indent}}},",
+        ]
+
+    lines = src.split("\n")
+    if dict_node.keys:
+        open_idx = dict_node.lineno - 1
+        if not lines[open_idx].rstrip().endswith("{"):
+            return False  # single-line non-empty dict; leave it for a human
+        lines[open_idx + 1 : open_idx + 1] = block
+        new_src = "\n".join(lines)
+    else:
+        line_starts = [0]
+        for line in src.splitlines(keepends=True):
+            line_starts.append(line_starts[-1] + len(line))
+        open_off = line_starts[dict_node.lineno - 1] + dict_node.col_offset
+        close_off = line_starts[dict_node.end_lineno - 1] + dict_node.end_col_offset
+        replacement = "{\n" + "\n".join(block) + "\n" + " " * base_indent + "}"
+        new_src = src[:open_off] + replacement + src[close_off:]
+
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(new_src)
+    return True
+
+
 def convertible_print_calls(proc):
     """Return print() Call nodes that can be safely rewritten to self.output().
 
@@ -657,12 +721,21 @@ def check_input_variable_entries(attrs):
     for var_name, spec in dict_entries(node):
         if not isinstance(spec, ast.Dict):
             continue
-        if not dict_has_key(spec, "description"):
+        desc = dict_get_value(spec, "description")
+        if desc is None:
             issues.append(
                 (
                     spec.lineno,
                     "E020",
                     f"input_variable `{var_name}` missing `description`",
+                )
+            )
+        elif is_blank_string(desc):
+            issues.append(
+                (
+                    desc.lineno,
+                    "E020",
+                    f"input_variable `{var_name}` has an empty `description`",
                 )
             )
         if not dict_has_key(spec, "required"):
@@ -761,7 +834,24 @@ def class_env_usage(proc):
                       .setdefault() is called (so keys cannot be enumerated)
       reads           list of (key, lineno) for constant-key reads
                       (`self.env["k"]` in load context or `self.env.get("k")`)
+
+    Reads nested inside the default argument(s) of a `self.env.get(...)` call are
+    excluded -- in `self.env.get("primary", self.env.get("fallback"))` only the
+    primary key is a real input; the fallback is just a default value.
     """
+    # Identify env reads that are fallback defaults of a self.env.get() call, so
+    # they can be skipped: everything inside any get()'s args[1:] subtree.
+    fallback_node_ids = set()
+    for node in ast.walk(proc):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and _is_self_env(node.func.value)
+        ):
+            for default in node.args[1:]:
+                fallback_node_ids.update(id(sub) for sub in ast.walk(default))
+
     writes_static = set()
     writes_dynamic = False
     reads = []
@@ -775,7 +865,7 @@ def class_env_usage(proc):
                     writes_static.add(node.slice.value)
                 else:
                     writes_dynamic = True
-            elif is_const:
+            elif is_const and id(node) not in fallback_node_ids:
                 reads.append((node.slice.value, node.lineno))
         elif (
             isinstance(node, ast.Call)
@@ -789,6 +879,7 @@ def class_env_usage(proc):
                 and node.args
                 and isinstance(node.args[0], ast.Constant)
                 and isinstance(node.args[0].value, str)
+                and id(node) not in fallback_node_ids
             ):
                 reads.append((node.args[0].value, node.lineno))
     return writes_static, writes_dynamic, reads
@@ -819,12 +910,15 @@ def check_outputs_assigned(proc, attrs):
     return issues
 
 
-def check_inputs_declared(proc, attrs):
-    """E030: env keys read by the class must be declared (or be AutoPkg built-ins).
+def undeclared_env_reads(proc, attrs):
+    """Return [(key, lineno), ...] for env reads that should be declared inputs.
 
-    Allowed without declaration: keys in input_variables or output_variables, and
-    the AUTOPKG_BUILTINS download-chain/core variables. Each undeclared key is
-    reported once, at its first read.
+    Allowed without declaration: keys in input_variables or output_variables, the
+    AUTOPKG_BUILTINS download-chain/core variables, ALL_CAPS keys (external
+    configuration/credentials, e.g. BES_PASSWORD, supplied via the environment),
+    and any key the class also writes to self.env (its own cached/internal state,
+    not an input -- e.g. a pickled requests_session round-tripped across runs).
+    One entry per key, at its first read; this backs both E030 and its auto-fix.
     """
     inp = attrs.get("input_variables")
     out = attrs.get("output_variables")
@@ -832,21 +926,26 @@ def check_inputs_declared(proc, attrs):
     for dict_node in (inp, out):
         if isinstance(dict_node, ast.Dict):
             declared |= {key for key, _ in dict_entries(dict_node)}
-    allowed = declared | AUTOPKG_BUILTINS
-    _, _, reads = class_env_usage(proc)
-    issues = []
+    writes_static, _, reads = class_env_usage(proc)
+    allowed = declared | AUTOPKG_BUILTINS | writes_static
+    result = []
     seen = set()
     for key, lineno in reads:
-        if key not in allowed and key not in seen:
-            seen.add(key)
-            issues.append(
-                (
-                    lineno,
-                    "E030",
-                    f"reads undeclared env key `{key}`; add it to input_variables",
-                )
-            )
-    return issues
+        # key.isupper() is True only when every cased char is uppercase and there
+        # is at least one letter -- i.e. ALL_CAPS config/constant style.
+        if key in allowed or key.isupper() or key in seen:
+            continue
+        seen.add(key)
+        result.append((key, lineno))
+    return result
+
+
+def check_inputs_declared(proc, attrs):
+    """E030: env keys read by the class must be declared (see undeclared_env_reads)."""
+    return [
+        (lineno, "E030", f"reads undeclared env key `{key}`; add it to input_variables")
+        for key, lineno in undeclared_env_reads(proc, attrs)
+    ]
 
 
 # --- multi-step auto-fixes ---------------------------------------------------
@@ -934,6 +1033,47 @@ def apply_main_guard_fix(path, info, classname):
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(content)
     return start
+
+
+def maybe_fix_inputs_declared(path, proc, info):
+    """Auto-fix E030: declare each undeclared read key in input_variables.
+
+    Adds `"<key>": {"required": False, "description": ""}`; the blank description
+    then surfaces as E020 for a human to complete. Returns the list of fixed
+    entries (empty if nothing was fixed). `info` is unused.
+    """
+    attrs, _ = class_members(proc)
+    undeclared = undeclared_env_reads(proc, attrs)
+    if not undeclared:
+        return []
+    dict_node = attrs.get("input_variables")
+    if not isinstance(dict_node, ast.Dict):
+        return []  # E014/E015 must be resolved first
+    base_indent = next(
+        (
+            item.col_offset
+            for item in proc.body
+            if isinstance(item, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == "input_variables"
+                for t in item.targets
+            )
+        ),
+        None,
+    )
+    if base_indent is None:
+        return []
+    keys = [key for key, _ in undeclared]
+    if not apply_add_input_vars_fix(path, base_indent, dict_node, keys):
+        return []
+    return [
+        (
+            dict_node.lineno,
+            "E030",
+            f"declared `{key}` in input_variables (blank description)",
+        )
+        for key in keys
+    ]
 
 
 def maybe_fix_print(path, proc, info):
@@ -1056,6 +1196,7 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
             (maybe_fix_redundant_doc_assign, {"E023"}),
             (maybe_fix_main_guard, {"E006", "E007"}),
             (maybe_fix_print, {"E028"}),
+            (maybe_fix_inputs_declared, {"E030"}),
         ):
             if codes & disabled:
                 continue
