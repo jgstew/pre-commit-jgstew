@@ -23,8 +23,11 @@ the canonical `PROCESSOR = <Class>()` / `PROCESSOR.execute_shell()` form when
 not), E012+E013 together (when a class has no docstring but sets
 `description = "<str>"`, the string is promoted to the class docstring and
 `description` is set to `__doc__`), E023 (a redundant `__doc__ = description`
-left over once `description = __doc__` is set), E028 (a simple `print(x)` inside
-a processor method is rewritten to `self.output(x, 3)`), and E030 (an undeclared
+left over once `description = __doc__` is set), E025 (a missing author/created
+header comment is added after the shebang as `# Created <year> by <author>`,
+using the file's original git author/year, or the current git user/year for a
+new file), E028 (a simple `print(x)` inside a processor method is rewritten to
+`self.output(x, 3)`), and E030 (an undeclared
 env key is added to input_variables with a blank description -- which then trips
 E020 so a human fills it in). Auto-fixed files are rewritten and the hook still
 exits non-zero so the changes can be reviewed and re-staged.
@@ -60,7 +63,9 @@ Exit codes:
 import argparse
 import ast
 import collections
+import datetime
 import os
+import subprocess
 import sys
 
 SKIP_MARKER = "pre-commit-skip: processor-conventions"
@@ -104,6 +109,7 @@ KNOWN_CODES = frozenset(
         "E022",  # output_variable description
         "E023",  # redundant __doc__ = description
         "E024",  # class docstring too brief (insufficient documentation)
+        "E025",  # missing author/created header comment after the shebang
         "E028",  # print() used instead of self.output()
         "E029",  # output_variable declared but never set
         "E030",  # reads an undeclared env key
@@ -245,6 +251,83 @@ def apply_shebang_fix(path):
         content = EXPECTED_SHEBANG + "\n" + content
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(content)
+
+
+def module_docstring_lineno(tree):
+    """Return the 1-based line of the module docstring, or None if absent."""
+    body = getattr(tree, "body", None)
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        return body[0].lineno
+    return None
+
+
+def has_header_comment(lines, doc_lineno):
+    """True if a comment line sits between the shebang and the module docstring."""
+    return any(line.lstrip().startswith("#") for line in lines[1 : doc_lineno - 1])
+
+
+def git_config_user_name():
+    """Return `git config user.name`, or "" if unavailable."""
+    try:
+        result = subprocess.run(
+            ["git", "config", "user.name"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        return result.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def git_created_by(path):
+    """Return (author, year) for `path`'s creation.
+
+    Uses the original commit that added the file (author name + author-date year).
+    Falls back to the current git user and current year for a new or untracked
+    file that has no creating commit yet. (`--follow` is intentionally omitted: it
+    is incompatible with `--reverse --diff-filter=A` and yields no output.)
+    """
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "log",
+                "--reverse",
+                "--diff-filter=A",
+                "--format=%an%x09%ad",
+                "--date=format:%Y",
+                "--",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        first = next((ln for ln in result.stdout.splitlines() if "\t" in ln), "")
+        if first:
+            name, year = first.split("\t", 1)
+            if name.strip() and year.strip():
+                return name.strip(), year.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return (git_config_user_name() or "Unknown", str(datetime.date.today().year))
+
+
+def apply_header_comment_fix(path, author, year):
+    """Insert `# Created by <author> <year>` directly after the shebang line."""
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+    lines[1:1] = [f"# Created {year} by {author}"]
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
 
 
 def imports_autopkglib(tree):
@@ -1379,6 +1462,35 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
             fixed.append(fixed_entry)
             tree = ast.parse(new_src)
     issues += check_module_docstring(tree)
+
+    # --- E025: author/created header comment between shebang and docstring ---
+    # Needs both a shebang and a module docstring to be present (E001/E002 add
+    # those first). The auto-fix stamps the file's original git author + year, or
+    # the current user + year for a brand-new/untracked file.
+    doc_lineno = module_docstring_lineno(tree)
+    lines = src.splitlines()
+    if (
+        "E025" not in disabled
+        and doc_lineno is not None
+        and lines
+        and lines[0].rstrip() == EXPECTED_SHEBANG
+        and not has_header_comment(lines, doc_lineno)
+    ):
+        if auto_fix:
+            author, year = git_created_by(path)
+            apply_header_comment_fix(path, author, year)
+            fixed.append((2, "E025", f"added `# Created {year} by {author}`"))
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                src = handle.read()
+            tree = ast.parse(src)
+        else:
+            issues.append(
+                (
+                    2,
+                    "E025",
+                    "missing author/created comment between the shebang and the module docstring",
+                )
+            )
 
     # --- module-level checks ---
     info = scan_module(tree)
