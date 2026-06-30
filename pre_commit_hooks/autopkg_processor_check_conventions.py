@@ -14,11 +14,22 @@ fixable check is neither auto-fixed nor reported.
 
 --auto-fix (default: yes) corrects the fixable conventions in place. Currently
 auto-fixable: E001 (the shebang), E002 (a completely missing module-level
-docstring), E012+E013 together (when a class has no docstring but sets
+docstring), E006/E007 (the `__main__` guard -- added when missing, rewritten to
+the canonical `PROCESSOR = <Class>()` / `PROCESSOR.execute_shell()` form when
+not), E012+E013 together (when a class has no docstring but sets
 `description = "<str>"`, the string is promoted to the class docstring and
-`description` is set to `__doc__`), and E023 (a redundant `__doc__ = description`
-left over once `description = __doc__` is set). Auto-fixed files are rewritten
-and the hook still exits non-zero so the changes can be reviewed and re-staged.
+`description` is set to `__doc__`), E023 (a redundant `__doc__ = description`
+left over once `description = __doc__` is set), and E028 (a simple `print(x)`
+inside a processor method is rewritten to `self.output(x, 3)`). Auto-fixed files
+are rewritten and the hook still exits non-zero so the changes can be reviewed
+and re-staged.
+
+Non-fixable opinionated checks include: E029 (every declared output_variable
+must be set via self.env) and E030 (every env key the processor reads must be
+declared in input_variables, unless it is an AutoPkg built-in). W003 warns when
+the `__main__` guard is not the last statement in the file. A `print(...)` call
+that E028 cannot safely rewrite (multiple args, file=/sep=/end= kwargs, or a
+staticmethod) stays reported for a human to fix.
 
 Only AutoPkg processors are validated. A .py file that does not import
 autopkglib (`import autopkglib` or `from autopkglib import ...`) is not a
@@ -68,8 +79,44 @@ KNOWN_CODES = frozenset(
         "E021",  # input_variable required
         "E022",  # output_variable description
         "E023",  # redundant __doc__ = description
+        "E028",  # print() used instead of self.output()
+        "E029",  # output_variable declared but never set
+        "E030",  # reads an undeclared env key
         "W001",  # not an AutoPkg processor
         "W002",  # file not found
+        "W003",  # __main__ guard not at end of file
+    ]
+)
+
+# Env keys a processor may read without declaring them in input_variables:
+# AutoPkg core variables plus the ubiquitous URLDownloader download-chain keys
+# that flow between processors. Reads of anything else should be declared.
+AUTOPKG_BUILTINS = frozenset(
+    [
+        "RECIPE_DIR",
+        "RECIPE_CACHE_DIR",
+        "RECIPE_PATH",
+        "PARENT_RECIPE",
+        "PARENT_RECIPES",
+        "RECIPE_OVERRIDE_DIRS",
+        "RECIPE_SEARCH_DIRS",
+        "AUTOPKG_VERSION",
+        "CACHE_DIR",
+        "verbose",
+        "NAME",
+        "version",
+        "pathname",
+        "PKG",
+        "pkg_path",
+        "dmg_path",
+        "url",
+        "download_changed",
+        "last_modified",
+        "etag",
+        "download_info",
+        "MUNKI_REPO",
+        "munki_repo",
+        "pkg_repo_dir",
     ]
 )
 
@@ -179,7 +226,7 @@ def imports_autopkglib(tree):
 # The top-level facts the module-level checks operate on, gathered in one pass.
 ModuleInfo = collections.namedtuple(
     "ModuleInfo",
-    ["all_names", "imports", "classes", "has_main_guard", "calls_execute_shell"],
+    ["all_names", "imports", "classes", "main_guard", "guard_is_last"],
 )
 
 
@@ -187,17 +234,16 @@ def scan_module(tree):
     """Walk the module's top-level nodes once and collect the facts checks need.
 
     Returns a ModuleInfo with:
-      all_names           list from `__all__`, or None if it is not declared
-      imports             names imported from any `autopkglib*` module
-      classes             {name: ClassDef} for every top-level class
-      has_main_guard      True if an `if __name__ == "__main__":` block exists
-      calls_execute_shell True if that block calls `.execute_shell()`
+      all_names     list from `__all__`, or None if it is not declared
+      imports       names imported from any `autopkglib*` module
+      classes       {name: ClassDef} for every top-level class
+      main_guard    the `if __name__ == "__main__":` ast.If node, or None
+      guard_is_last True if that guard is the last top-level statement
     """
     all_names = None
     imports = set()
     classes = {}
-    has_main_guard = False
-    calls_execute_shell = False
+    main_guard = None
 
     for node in tree.body:
         if isinstance(node, ast.Assign):
@@ -226,16 +272,10 @@ def scan_module(tree):
                 and isinstance(test.left, ast.Name)
                 and test.left.id == "__name__"
             ):
-                has_main_guard = True
-                for sub in ast.walk(node):
-                    if (
-                        isinstance(sub, ast.Call)
-                        and isinstance(sub.func, ast.Attribute)
-                        and sub.func.attr == "execute_shell"
-                    ):
-                        calls_execute_shell = True
+                main_guard = node
 
-    return ModuleInfo(all_names, imports, classes, has_main_guard, calls_execute_shell)
+    guard_is_last = bool(tree.body) and tree.body[-1] is main_guard
+    return ModuleInfo(all_names, imports, classes, main_guard, guard_is_last)
 
 
 def pick_processor_class(info, stem):
@@ -382,6 +422,67 @@ def apply_class_docstring_from_description_fix(path, assign):
         handle.write("\n".join(lines))
 
 
+def convertible_print_calls(proc):
+    """Return print() Call nodes that can be safely rewritten to self.output().
+
+    Restricted to calls with exactly one positional argument (not a `*splat`)
+    and no keywords, located inside an instance method (first parameter `self`)
+    so `self.output` is in scope. Other print() calls remain E028 errors for a
+    human to handle (multiple args, file=/sep=/end= kwargs, staticmethods, ...).
+    """
+    calls = []
+    for item in proc.body:
+        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not (item.args.args and item.args.args[0].arg == "self"):
+            continue
+        for node in ast.walk(item):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "print"
+                and len(node.args) == 1
+                and not node.keywords
+                and not isinstance(node.args[0], ast.Starred)
+            ):
+                calls.append(node)
+    return calls
+
+
+def apply_print_to_output_fix(path, calls):
+    """Rewrite each `print(arg)` to `self.output(arg, 3)`, preserving arg source.
+
+    Verbosity 3 keeps the message quiet unless AutoPkg is run with -vvv. Edits
+    are spliced by absolute source offset, back-to-front, so multi-line calls
+    and repeated text are handled correctly.
+    """
+    with open(path, encoding="utf-8") as handle:
+        src = handle.read()
+    line_starts = [0]
+    for line in src.splitlines(keepends=True):
+        line_starts.append(line_starts[-1] + len(line))
+
+    def offset(lineno, col):
+        return line_starts[lineno - 1] + col
+
+    spans = []
+    for node in calls:
+        call_start = offset(node.lineno, node.col_offset)
+        call_end = offset(node.end_lineno, node.end_col_offset)
+        arg = node.args[0]
+        arg_src = src[
+            offset(arg.lineno, arg.col_offset) : offset(
+                arg.end_lineno, arg.end_col_offset
+            )
+        ]
+        spans.append((call_start, call_end, arg_src))
+    for call_start, call_end, arg_src in sorted(spans, reverse=True):
+        src = src[:call_start] + f"self.output({arg_src}, 3)" + src[call_end:]
+
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(src)
+
+
 # --- individual checks -------------------------------------------------------
 # Each returns a (possibly empty) list of (lineno, check_id, message) tuples and
 # never mutates anything, so they can be read, tested, and reordered in
@@ -409,13 +510,71 @@ def check_processor_error_import(info):
     return []
 
 
-def check_main_guard(info):
-    """E006/E007: a `__main__` guard must exist and call `.execute_shell()`."""
-    if not info.has_main_guard:
+def canonical_guard_lines(classname):
+    """The exact source lines a `__main__` guard must have for `classname`."""
+    return [
+        'if __name__ == "__main__":',
+        f"    PROCESSOR = {classname}()",
+        "    PROCESSOR.execute_shell()",
+    ]
+
+
+def guard_is_canonical(guard, classname):
+    """True if the guard body is exactly the canonical two statements.
+
+    Canonical form: `PROCESSOR = <classname>()` then `PROCESSOR.execute_shell()`.
+    """
+    body = guard.body
+    if len(body) != 2:
+        return False
+    assign, call = body
+    ok_assign = (
+        isinstance(assign, ast.Assign)
+        and len(assign.targets) == 1
+        and isinstance(assign.targets[0], ast.Name)
+        and assign.targets[0].id == "PROCESSOR"
+        and isinstance(assign.value, ast.Call)
+        and isinstance(assign.value.func, ast.Name)
+        and assign.value.func.id == classname
+        and not assign.value.args
+        and not assign.value.keywords
+    )
+    ok_call = (
+        isinstance(call, ast.Expr)
+        and isinstance(call.value, ast.Call)
+        and isinstance(call.value.func, ast.Attribute)
+        and call.value.func.attr == "execute_shell"
+        and isinstance(call.value.func.value, ast.Name)
+        and call.value.func.value.id == "PROCESSOR"
+        and not call.value.args
+    )
+    return ok_assign and ok_call
+
+
+def check_main_guard(proc, info):
+    """E006/E007/W003: enforce the canonical `__main__` guard at the file end."""
+    guard = info.main_guard
+    if guard is None:
         return [(1, "E006", 'missing `if __name__ == "__main__":` block')]
-    if not info.calls_execute_shell:
-        return [(1, "E007", "`__main__` block should call `PROCESSOR.execute_shell()`")]
-    return []
+    issues = []
+    if not guard_is_canonical(guard, proc.name):
+        issues.append(
+            (
+                guard.lineno,
+                "E007",
+                f"`__main__` block must be exactly "
+                f"`PROCESSOR = {proc.name}()` then `PROCESSOR.execute_shell()`",
+            )
+        )
+    if not info.guard_is_last:
+        issues.append(
+            (
+                guard.lineno,
+                "W003",
+                "`__main__` guard should be the last statement in the file",
+            )
+        )
+    return issues
 
 
 def check_class_naming(proc, stem, info):
@@ -564,6 +723,132 @@ def check_redundant_doc_assign(proc):
     return []
 
 
+def check_no_print(proc):
+    """E028: processors must log via `self.output(...)`, never `print(...)`."""
+    issues = []
+    for node in ast.walk(proc):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "print"
+        ):
+            issues.append(
+                (
+                    node.lineno,
+                    "E028",
+                    "use `self.output(...)` instead of `print(...)` in a processor",
+                )
+            )
+    return issues
+
+
+def _is_self_env(node):
+    """True if `node` is the `self.env` attribute access."""
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "env"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+    )
+
+
+def class_env_usage(proc):
+    """Inspect every `self.env` access in the class.
+
+    Returns (writes_static, writes_dynamic, reads):
+      writes_static   set of string keys assigned (`self.env["k"] = ...`)
+      writes_dynamic  True if any write uses a non-constant key, or .update()/
+                      .setdefault() is called (so keys cannot be enumerated)
+      reads           list of (key, lineno) for constant-key reads
+                      (`self.env["k"]` in load context or `self.env.get("k")`)
+    """
+    writes_static = set()
+    writes_dynamic = False
+    reads = []
+    for node in ast.walk(proc):
+        if isinstance(node, ast.Subscript) and _is_self_env(node.value):
+            is_const = isinstance(node.slice, ast.Constant) and isinstance(
+                node.slice.value, str
+            )
+            if isinstance(node.ctx, ast.Store):
+                if is_const:
+                    writes_static.add(node.slice.value)
+                else:
+                    writes_dynamic = True
+            elif is_const:
+                reads.append((node.slice.value, node.lineno))
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and _is_self_env(node.func.value)
+        ):
+            if node.func.attr in ("update", "setdefault"):
+                writes_dynamic = True
+            elif (
+                node.func.attr == "get"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                reads.append((node.args[0].value, node.lineno))
+    return writes_static, writes_dynamic, reads
+
+
+def check_outputs_assigned(proc, attrs):
+    """E029: every declared output_variable must actually be set via self.env.
+
+    Suppressed entirely when the class writes self.env with a dynamic key (or
+    .update()/.setdefault()), since the set of keys then cannot be proven.
+    """
+    node = attrs.get("output_variables")
+    if not isinstance(node, ast.Dict):
+        return []  # missing/non-dict is E016/E017's job
+    writes_static, writes_dynamic, _ = class_env_usage(proc)
+    if writes_dynamic:
+        return []
+    issues = []
+    for var_name, spec in dict_entries(node):
+        if var_name not in writes_static:
+            issues.append(
+                (
+                    getattr(spec, "lineno", proc.lineno),
+                    "E029",
+                    f"output_variable `{var_name}` is declared but never set via self.env",
+                )
+            )
+    return issues
+
+
+def check_inputs_declared(proc, attrs):
+    """E030: env keys read by the class must be declared (or be AutoPkg built-ins).
+
+    Allowed without declaration: keys in input_variables or output_variables, and
+    the AUTOPKG_BUILTINS download-chain/core variables. Each undeclared key is
+    reported once, at its first read.
+    """
+    inp = attrs.get("input_variables")
+    out = attrs.get("output_variables")
+    declared = set()
+    for dict_node in (inp, out):
+        if isinstance(dict_node, ast.Dict):
+            declared |= {key for key, _ in dict_entries(dict_node)}
+    allowed = declared | AUTOPKG_BUILTINS
+    _, _, reads = class_env_usage(proc)
+    issues = []
+    seen = set()
+    for key, lineno in reads:
+        if key not in allowed and key not in seen:
+            seen.add(key)
+            issues.append(
+                (
+                    lineno,
+                    "E030",
+                    f"reads undeclared env key `{key}`; add it to input_variables",
+                )
+            )
+    return issues
+
+
 # --- multi-step auto-fixes ---------------------------------------------------
 # These mutate the file on disk, so they are kept apart from the pure checks.
 
@@ -588,12 +873,12 @@ def maybe_fix_module_docstring(path, tree, stem):
         return fixed_entry, handle.read()
 
 
-def maybe_fix_class_docstring(path, proc):
+def maybe_fix_class_docstring(path, proc, info):
     """Auto-fix E012+E013 together when convertible.
 
     When the class has no docstring but sets `description = "<str>"`, promote the
     string to the class docstring and set `description = __doc__`. Returns the
-    list of fixed entries (empty if nothing was fixed).
+    list of fixed entries (empty if nothing was fixed). `info` is unused.
     """
     if ast.get_docstring(proc):
         return []
@@ -611,16 +896,77 @@ def maybe_fix_class_docstring(path, proc):
     ]
 
 
-def maybe_fix_redundant_doc_assign(path, proc):
+def maybe_fix_redundant_doc_assign(path, proc, info):
     """Auto-fix E023: remove a redundant `__doc__ = description` assignment.
 
-    Returns the list of fixed entries (empty if nothing was fixed).
+    Returns the list of fixed entries (empty if nothing was fixed). `info` is
+    unused.
     """
     assign = redundant_doc_assign(proc)
     if assign is None:
         return []
     apply_remove_doc_assign_fix(path, assign)
     return [(assign.lineno, "E023", "removed redundant `__doc__ = description`")]
+
+
+def apply_main_guard_fix(path, info, classname):
+    """Write the canonical `__main__` guard; return its new 1-based start line.
+
+    Appends the guard (after two blank lines) when none exists, or replaces an
+    existing non-canonical guard's source lines in place.
+    """
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+    guard_lines = canonical_guard_lines(classname)
+    if info.main_guard is None:
+        while lines and lines[-1].strip() == "":
+            lines.pop()
+        start = len(lines) + 3  # two blank lines, then the guard's `if` line
+        lines += ["", ""] + guard_lines
+        content = "\n".join(lines) + "\n"
+    else:
+        guard = info.main_guard
+        start = guard.lineno
+        begin = guard.lineno - 1
+        end = (guard.end_lineno or guard.lineno) - 1
+        lines[begin : end + 1] = guard_lines
+        content = "\n".join(lines)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    return start
+
+
+def maybe_fix_print(path, proc, info):
+    """Auto-fix E028: rewrite simple `print(x)` calls to `self.output(x, 3)`.
+
+    Only the safely-convertible calls are rewritten (see convertible_print_calls);
+    any others remain reported as E028. Returns the list of fixed entries.
+    `info` is unused.
+    """
+    calls = convertible_print_calls(proc)
+    if not calls:
+        return []
+    apply_print_to_output_fix(path, calls)
+    return [
+        (node.lineno, "E028", "converted `print(...)` to `self.output(..., 3)`")
+        for node in calls
+    ]
+
+
+def maybe_fix_main_guard(path, proc, info):
+    """Auto-fix E006/E007: ensure the canonical `__main__` guard exists.
+
+    Adds the guard when missing (E006) or rewrites a non-canonical one (E007).
+    The W003 "not at end" condition is a warning only and is never auto-fixed.
+    Returns the list of fixed entries (empty if nothing was fixed).
+    """
+    if info.main_guard is None:
+        line = apply_main_guard_fix(path, info, proc.name)
+        return [(line, "E006", f"added canonical `__main__` guard for {proc.name}")]
+    if not guard_is_canonical(info.main_guard, proc.name):
+        line = apply_main_guard_fix(path, info, proc.name)
+        return [(line, "E007", "normalized `__main__` guard to canonical form")]
+    return []
 
 
 def check_file(path, auto_fix=True, disabled=frozenset()):
@@ -695,7 +1041,6 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
     info = scan_module(tree)
     issues += check_all_declared(info)  # E003
     issues += check_processor_error_import(info)  # E005
-    issues += check_main_guard(info)  # E006 / E007
 
     proc = pick_processor_class(info, stem)
     if proc is None:
@@ -709,10 +1054,12 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
         for fixer, codes in (
             (maybe_fix_class_docstring, {"E012", "E013"}),
             (maybe_fix_redundant_doc_assign, {"E023"}),
+            (maybe_fix_main_guard, {"E006", "E007"}),
+            (maybe_fix_print, {"E028"}),
         ):
             if codes & disabled:
                 continue
-            class_fixed = fixer(path, proc)
+            class_fixed = fixer(path, proc, info)
             if class_fixed:
                 fixed += class_fixed
                 more_issues, more_fixed = check_file(
@@ -731,6 +1078,10 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
     issues += check_output_variable_entries(attrs)  # E022
     issues += check_main_method(proc, main_func)  # E018 / E019
     issues += check_redundant_doc_assign(proc)  # E023
+    issues += check_main_guard(proc, info)  # E006 / E007 / W003
+    issues += check_no_print(proc)  # E028
+    issues += check_outputs_assigned(proc, attrs)  # E029
+    issues += check_inputs_declared(proc, attrs)  # E030
 
     return sorted(issues), fixed
 
