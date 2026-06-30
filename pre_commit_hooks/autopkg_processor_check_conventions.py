@@ -1231,13 +1231,43 @@ def maybe_fix_all_declaration(path, proc, info):
     return [(insert_at + 2, "E003", f'added `__all__ = ["{proc.name}"]`')]
 
 
+def variable_example_lines(kind, indent):
+    """Lines for a documented-but-empty input/output_variables assignment.
+
+    `kind` is "input" or "output"; `indent` is the class-body leading whitespace.
+    A multi-line comment above the empty `{}` shows the expected entry shape so an
+    author knows what to fill in.
+    """
+    if kind == "input":
+        return [
+            f"{indent}# input_variables: every value this processor reads from the",
+            f"{indent}# environment. Document each one. Example entry:",
+            f'{indent}#     "example_input": {{',
+            f'{indent}#         "required": False,',
+            f'{indent}#         "default": "",',
+            f'{indent}#         "description": "What this input controls.",',
+            f"{indent}#     }},",
+            f"{indent}input_variables = {{}}",
+        ]
+    return [
+        f"{indent}# output_variables: every value this processor writes back to",
+        f"{indent}# the environment. Document each one. Example entry:",
+        f'{indent}#     "example_output": {{',
+        f'{indent}#         "description": "What this output contains.",',
+        f"{indent}#     }},",
+        f"{indent}output_variables = {{}}",
+    ]
+
+
 def maybe_fix_create_class(path, stem):
     """Auto-fix E010 (no class found): append a minimal processor class stub.
 
     The class is named after the file's basename and is a complete, valid
     processor skeleton, so the re-analysis pass can chain the remaining fixes
-    (E003 `__all__`, E006 `__main__` guard). Returns the fixed entry, or None
-    when the basename is not a valid Python identifier (so it stays reported).
+    (E003 `__all__`, E006 `__main__` guard). The empty input/output_variables get
+    an example comment above them so the author knows the shape to fill in.
+    Returns the fixed entry, or None when the basename is not a valid Python
+    identifier (so it stays reported).
     """
     if not stem.isidentifier():
         return None
@@ -1253,8 +1283,10 @@ def maybe_fix_create_class(path, stem):
         f'    """{stem} processor."""',
         "",
         "    description = __doc__",
-        "    input_variables = {}",
-        "    output_variables = {}",
+    ]
+    lines += variable_example_lines("input", "    ")
+    lines += variable_example_lines("output", "    ")
+    lines += [
         "",
         "    def main(self):",
         '        """Execution starts here."""',
