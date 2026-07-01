@@ -1264,26 +1264,47 @@ def check_outputs_declared(proc, attrs, source_lines):
 
 
 def check_test_recipe(path, stem):
-    """W005: a processor should have at least one Test-Recipe.
+    """W005: a processor should have at least one test recipe.
 
-    Looks for `Test-Recipes/<stem>*.test.recipe.yaml` (allowing per-platform
-    variants like `<stem>-Win.test.recipe.yaml`). Report-only.
+    Looks for `<stem>.test.recipe.yaml` (or a `<stem>-*.test.recipe.yaml` variant,
+    e.g. `<stem>-Win.test.recipe.yaml`) in the processor's own folder or in any
+    sibling folder whose name contains "test" (case-insensitive), e.g.
+    Test-Recipes/. Report-only.
     """
-    test_dir = os.path.join(os.path.dirname(os.path.dirname(path)), "Test-Recipes")
-    prefix = stem + "-"
     suffix = ".test.recipe.yaml"
+    prefix = stem + "-"
+
+    def is_test_recipe(name):
+        return name == stem + suffix or (
+            name.startswith(prefix) and name.endswith(suffix)
+        )
+
+    proc_dir = os.path.dirname(path)
+    repo_root = os.path.dirname(proc_dir)
+
+    # search the processor's own folder, plus sibling "*test*" folders
+    search_dirs = [proc_dir or "."]
     try:
-        entries = os.listdir(test_dir)
+        for entry in os.listdir(repo_root or "."):
+            full = os.path.join(repo_root, entry)
+            if full != proc_dir and "test" in entry.lower() and os.path.isdir(full):
+                search_dirs.append(full)
     except OSError:
-        entries = []
-    for name in entries:
-        if name == stem + suffix or (name.startswith(prefix) and name.endswith(suffix)):
-            return []
+        pass
+
+    for directory in search_dirs:
+        try:
+            if any(is_test_recipe(name) for name in os.listdir(directory)):
+                return []
+        except OSError:
+            continue
+
     return [
         (
             1,
             "W005",
-            f"no test recipe found (expected Test-Recipes/{stem}.test.recipe.yaml)",
+            f"no test recipe found (expected a {stem}*.test.recipe.yaml in this "
+            'folder or a sibling "*test*" folder)',
         )
     ]
 
