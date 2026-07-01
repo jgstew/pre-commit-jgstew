@@ -35,17 +35,24 @@ exits non-zero so the changes can be reviewed and re-staged.
 Non-fixable opinionated checks include: E020 (every input_variable needs a
 non-empty `description`), E024 (the class docstring is the processor's primary
 documentation -- a trivial one-liner or generated stub is rejected so it gets
-expanded and maintained), and E029 (every declared output_variable must be set via
-self.env, unless it is also an input_variable -- declaring an input as an output
-too is a deliberate way to have AutoPkg re-display it in verbose runs). E030
-allows AutoPkg built-ins, ALL_CAPS external config/credential keys (e.g.
+expanded and maintained), E026 (every name in `__all__` must be defined in the
+file -- need not be a class), and E029 (every declared output_variable must be
+set via self.env, unless it is also an input_variable -- declaring an input as an
+output too is a deliberate way to have AutoPkg re-display it in verbose runs).
+E030 allows AutoPkg built-ins, ALL_CAPS external config/credential keys (e.g.
 BES_PASSWORD), keys the processor writes itself, and get() fallback defaults.
-W003 warns when the `__main__` guard is not the last statement in the file. W004
-warns when the processor writes a `self.env[...]` key that is not declared in
-output_variables (exempting keys it also reads, ALL_CAPS/built-in control vars,
-and any write carrying the `# output-undeclared-ok` marker). A `print(...)` call
-that E028 cannot safely rewrite (multiple args, file=/sep=/end= kwargs, or a
-staticmethod) stays reported for a human to fix.
+
+Warnings (do not fail the hook): W003 (the `__main__` guard is not last in the
+file), W004 (writes a `self.env[...]` key not declared in output_variables),
+W005 (no Test-Recipes/<Name>*.test.recipe.yaml for this processor), W006 (imports
+a platform-specific module in a cross-platform repo), W007 (an input_variable is
+declared but never read from self.env), and W008 (a hardcoded user/machine-
+specific path). W004/W006/W007/W008 each accept a per-line opt-out comment
+(`# output-undeclared-ok`, `# platform-specific-ok`, `# input-unread-ok`,
+`# hardcoded-path-ok`) for reviewed, intentional exceptions.
+
+A `print(...)` call that E028 cannot safely rewrite (multiple args, file=/sep=/
+end= kwargs, or a staticmethod) stays reported for a human to fix.
 
 Only AutoPkg processors are validated. A .py file that does not import
 autopkglib (`import autopkglib` or `from autopkglib import ...`) is not a
@@ -65,16 +72,61 @@ import ast
 import collections
 import datetime
 import os
+import re
 import subprocess
 import sys
 
 SKIP_MARKER = "pre-commit-skip: processor-conventions"
 EXPECTED_SHEBANG = "#!/usr/local/autopkg/python"
 
-# Inline marker (a trailing comment) that exempts a single `self.env[...] = ...`
-# write from W004 -- for values intentionally not declared as outputs, e.g. very
-# large strings (file_base64, content_string).
-OUTPUT_UNDECLARED_MARKER = "output-undeclared-ok"
+# Inline markers (a trailing comment, or a comment on the line above) that exempt
+# a single line from a warning. Used for intentional, reviewed exceptions.
+OUTPUT_UNDECLARED_MARKER = "output-undeclared-ok"  # W004
+PLATFORM_IMPORT_MARKER = "platform-specific-ok"  # W006
+INPUT_UNREAD_MARKER = "input-unread-ok"  # W007
+HARDCODED_PATH_MARKER = "hardcoded-path-ok"  # W008
+
+# Platform-specific modules a cross-platform processor should not import
+# unconditionally (W006). A genuinely platform-specific processor can opt out
+# with the PLATFORM_IMPORT_MARKER on the import line.
+PLATFORM_SPECIFIC_MODULES = frozenset(
+    [
+        # macOS (pyobjc and friends)
+        "Foundation",
+        "AppKit",
+        "objc",
+        "CoreFoundation",
+        "Cocoa",
+        "Quartz",
+        "PyObjCTools",
+        "ScriptingBridge",
+        "LaunchServices",
+        "SystemConfiguration",
+        # Windows
+        "msilib",
+        "winreg",
+        "_winreg",
+        "winsound",
+        "win32api",
+        "win32com",
+        "win32con",
+        "win32file",
+        "win32gui",
+        "pywintypes",
+    ]
+)
+
+# String literals that pin to a specific user/machine location (W008). These are
+# almost always accidental (a leftover personal path); standard tool locations
+# like /usr/local/bin or /opt/homebrew are intentionally NOT matched.
+HARDCODED_PATH_RE = re.compile(
+    r"""^(
+        /Users/ | /home/ |                 # unix home dirs
+        /private/var/folders/ | /var/folders/ |   # macOS per-user temp
+        [A-Za-z]:[\\/]Users[\\/]            # Windows user profile
+    )""",
+    re.VERBOSE,
+)
 
 # A class docstring is the processor's primary documentation (AutoPkg surfaces it
 # as the processor description), so a trivial one-liner is rejected by E024. This
@@ -110,6 +162,7 @@ KNOWN_CODES = frozenset(
         "E023",  # redundant __doc__ = description
         "E024",  # class docstring too brief (insufficient documentation)
         "E025",  # missing author/created header comment after the shebang
+        "E026",  # __all__ lists a name not defined in this file
         "E028",  # print() used instead of self.output()
         "E029",  # output_variable declared but never set
         "E030",  # reads an undeclared env key
@@ -117,6 +170,10 @@ KNOWN_CODES = frozenset(
         "W002",  # file not found
         "W003",  # __main__ guard not at end of file
         "W004",  # writes an env key not declared in output_variables
+        "W005",  # no test recipe for this processor
+        "W006",  # imports a platform-specific module
+        "W007",  # input_variable declared but never read
+        "W008",  # hardcoded user/machine-specific path
     ]
 )
 
@@ -234,6 +291,89 @@ def is_blank_string(node):
         and isinstance(node.value, str)
         and not node.value.strip()
     )
+
+
+def line_has_marker(source_lines, lineno, marker):
+    """True if `marker` appears on the given 1-based line or the line directly above."""
+    context = source_lines[max(0, lineno - 2) : lineno]
+    return any(marker in line for line in context)
+
+
+def module_defined_names(body, names=None):
+    """Collect names defined at module scope (recursing into top-level if/try).
+
+    Includes classes, functions, simple assignment targets, and imported names,
+    but not names bound only inside functions/classes. Used by E026 to verify
+    every `__all__` entry is actually defined in the file (need not be a class).
+    """
+    if names is None:
+        names = set()
+    for node in body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+                elif isinstance(target, (ast.Tuple, ast.List)):
+                    names.update(e.id for e in target.elts if isinstance(e, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.If):
+            module_defined_names(node.body, names)
+            module_defined_names(node.orelse, names)
+        elif isinstance(node, ast.Try):
+            module_defined_names(node.body, names)
+            for handler in node.handlers:
+                module_defined_names(handler.body, names)
+            module_defined_names(node.orelse, names)
+            module_defined_names(node.finalbody, names)
+    return names
+
+
+def env_read_info(proc):
+    """Return (read_keys, has_dynamic_read) for every self.env read in the class.
+
+    read_keys is the set of constant string keys read via subscript-load or
+    `self.env.get(...)`, INCLUDING get() fallback defaults (a declared input may
+    legitimately be consumed only as a fallback). has_dynamic_read is True if any
+    read uses a non-constant key, so callers can suppress unprovable warnings.
+    """
+    keys = set()
+    dynamic = False
+    for node in ast.walk(proc):
+        if (
+            isinstance(node, ast.Subscript)
+            and _is_self_env(node.value)
+            and isinstance(node.ctx, ast.Load)
+        ):
+            if isinstance(node.slice, ast.Constant) and isinstance(
+                node.slice.value, str
+            ):
+                keys.add(node.slice.value)
+            else:
+                dynamic = True
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and _is_self_env(node.func.value)
+        ):
+            if (
+                node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                keys.add(node.args[0].value)
+            elif node.args:
+                dynamic = True
+    return keys, dynamic
 
 
 def apply_shebang_fix(path):
@@ -1110,9 +1250,7 @@ def check_outputs_declared(proc, attrs, source_lines):
         key = node.slice.value
         if key in seen or key in exempt or key.isupper():
             continue
-        # the marker may sit on the write's own line or the line directly above it
-        context = source_lines[max(0, node.lineno - 2) : node.lineno]
-        if any(OUTPUT_UNDECLARED_MARKER in line for line in context):
+        if line_has_marker(source_lines, node.lineno, OUTPUT_UNDECLARED_MARKER):
             continue
         seen.add(key)
         issues.append(
@@ -1123,6 +1261,139 @@ def check_outputs_declared(proc, attrs, source_lines):
             )
         )
     return issues
+
+
+def check_test_recipe(path, stem):
+    """W005: a processor should have at least one Test-Recipe.
+
+    Looks for `Test-Recipes/<stem>*.test.recipe.yaml` (allowing per-platform
+    variants like `<stem>-Win.test.recipe.yaml`). Report-only.
+    """
+    test_dir = os.path.join(os.path.dirname(os.path.dirname(path)), "Test-Recipes")
+    prefix = stem + "-"
+    suffix = ".test.recipe.yaml"
+    try:
+        entries = os.listdir(test_dir)
+    except OSError:
+        entries = []
+    for name in entries:
+        if name == stem + suffix or (name.startswith(prefix) and name.endswith(suffix)):
+            return []
+    return [
+        (
+            1,
+            "W005",
+            f"no test recipe found (expected Test-Recipes/{stem}.test.recipe.yaml)",
+        )
+    ]
+
+
+def check_platform_imports(tree, source_lines):
+    """W006: importing a platform-specific module in a cross-platform processor.
+
+    Flags imports of PLATFORM_SPECIFIC_MODULES (macOS pyobjc, Windows-only, ...).
+    A genuinely platform-specific processor can opt out with the
+    `# platform-specific-ok` marker on (or just above) the import line.
+    """
+    issues = []
+    for node in ast.walk(tree):
+        names = []
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names = [node.module]
+        for name in names:
+            if name.split(".")[0] in PLATFORM_SPECIFIC_MODULES:
+                if line_has_marker(source_lines, node.lineno, PLATFORM_IMPORT_MARKER):
+                    continue
+                issues.append(
+                    (
+                        node.lineno,
+                        "W006",
+                        f"imports platform-specific module `{name}`; guard it and "
+                        f"add `# {PLATFORM_IMPORT_MARKER}` if intentional",
+                    )
+                )
+    return issues
+
+
+def check_hardcoded_paths(tree, source_lines):
+    """W008: a string literal pinned to a user/machine-specific path.
+
+    Flags home dirs and per-user temp/profile paths (almost always accidental).
+    Standard tool locations (/usr/local/bin, /opt/homebrew, ...) are NOT matched.
+    Opt out a deliberate one with the `# hardcoded-path-ok` marker.
+    """
+    issues = []
+    seen = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        if not HARDCODED_PATH_RE.match(node.value):
+            continue
+        key = (node.lineno, node.value)
+        if key in seen:
+            continue
+        if line_has_marker(source_lines, node.lineno, HARDCODED_PATH_MARKER):
+            continue
+        seen.add(key)
+        issues.append(
+            (
+                node.lineno,
+                "W008",
+                f"hardcoded user/machine-specific path {node.value!r}",
+            )
+        )
+    return issues
+
+
+def check_inputs_read(proc, attrs, source_lines):
+    """W007: an input_variable declared but never read from self.env.
+
+    Suppressed when the class subclasses another processor (inputs may be
+    consumed by the parent), when self.env is read with a dynamic key (cannot be
+    proven), or when the declaration carries the `# input-unread-ok` marker.
+    """
+    node = attrs.get("input_variables")
+    if not isinstance(node, ast.Dict):
+        return []
+    # inputs of a subclass may be consumed by its parent processor -> can't prove
+    if set(base_names(proc)) - {"Processor"}:
+        return []
+    read_keys, dynamic = env_read_info(proc)
+    if dynamic:
+        return []
+    issues = []
+    for var_name, spec in dict_entries(node):
+        lineno = getattr(spec, "lineno", proc.lineno)
+        if var_name in read_keys:
+            continue
+        if line_has_marker(source_lines, lineno, INPUT_UNREAD_MARKER):
+            continue
+        issues.append(
+            (
+                lineno,
+                "W007",
+                f"input_variable `{var_name}` is declared but never read from self.env",
+            )
+        )
+    return issues
+
+
+def check_all_defined(tree, info):
+    """E026: every name in `__all__` must be defined in this file.
+
+    The name need not be a class -- functions and module constants are fine
+    (e.g. SharedUtilityMethods exports helpers). E003 handles a missing `__all__`.
+    """
+    if info.all_names is None:
+        return []
+    defined = module_defined_names(tree.body)
+    return [
+        (1, "E026", f"`__all__` lists `{name}` which is not defined in this file")
+        for name in info.all_names
+        if name not in defined
+    ]
 
 
 def undeclared_env_reads(proc, attrs):
@@ -1479,6 +1750,7 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
         fixed_entry, new_src = maybe_fix_module_docstring(path, tree, stem)
         if fixed_entry:
             fixed.append(fixed_entry)
+            src = new_src  # keep src in sync so later line-based checks align
             tree = ast.parse(new_src)
     issues += check_module_docstring(tree)
 
@@ -1512,9 +1784,14 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
             )
 
     # --- module-level checks ---
+    source_lines = src.splitlines()
     info = scan_module(tree)
     issues += check_all_declared(info)  # E003
+    issues += check_all_defined(tree, info)  # E026
     issues += check_processor_error_import(info)  # E005
+    issues += check_test_recipe(path, stem)  # W005
+    issues += check_platform_imports(tree, source_lines)  # W006
+    issues += check_hardcoded_paths(tree, source_lines)  # W008
 
     proc = pick_processor_class(info, stem)
     if proc is None:
@@ -1569,7 +1846,8 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
     issues += check_no_print(proc)  # E028
     issues += check_outputs_assigned(proc, attrs)  # E029
     issues += check_inputs_declared(proc, attrs)  # E030
-    issues += check_outputs_declared(proc, attrs, src.splitlines())  # W004
+    issues += check_inputs_read(proc, attrs, source_lines)  # W007
+    issues += check_outputs_declared(proc, attrs, source_lines)  # W004
 
     return sorted(issues), fixed
 
