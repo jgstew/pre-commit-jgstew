@@ -7,12 +7,18 @@ so every processor looks and behaves consistently.
 
 Usage:
     check_processor_conventions.py [--auto-fix=yes|no] [--disable E005,E020]
-        SharedProcessors/Foo.py [...]
+        [SharedProcessors/Foo.py ...]
+
+With no file arguments, all processor-looking .py files (those importing
+autopkglib) in the current folder and up to 3 subfolders deep are checked;
+non-processor .py files are silently ignored.
 
 --disable takes a comma-separated list of check IDs to skip entirely. A disabled
 fixable check is neither auto-fixed nor reported.
 
---auto-fix (default: yes) corrects the fixable conventions in place. Currently
+--auto-fix corrects the fixable conventions in place. It defaults to yes when
+files are given explicitly, but to no when auto-discovering (bare invocation), so
+a bare run is read-only unless you pass --auto-fix=yes. Currently
 auto-fixable: E001 (the shebang), E002 (a completely missing module-level
 docstring), E003 (a missing `__all__`, added after the imports as
 `__all__ = ["<Class>"]` -- only when the file has a class), E010 (a file with no
@@ -1894,14 +1900,59 @@ def check_files(paths, auto_fix=True, disabled=frozenset()):
     return results
 
 
+def looks_like_processor(path):
+    """True if a .py file appears to be an AutoPkg processor (imports autopkglib).
+
+    Used by discovery so plain scripts, helpers, and tests are silently skipped.
+    Uses the AST when the file parses; falls back to a text check so a processor
+    with a syntax error is still picked up (and reported as E000).
+    """
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            src = handle.read()
+    except OSError:
+        return False
+    try:
+        return imports_autopkglib(ast.parse(src))
+    except SyntaxError:
+        return "autopkglib" in src
+
+
+def discover_processor_files(root=".", max_depth=3):
+    """Return .py files under `root` that look like AutoPkg processors.
+
+    Descends at most `max_depth` subfolders deep (root itself is depth 0). Hidden
+    directories and common noise (__pycache__, node_modules) are pruned. Only
+    files that look like processors are returned; other .py files are ignored.
+    """
+    skip_dirs = {"__pycache__", "node_modules"}
+    root = os.path.normpath(root)
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel = os.path.relpath(dirpath, root)
+        depth = 0 if rel == os.curdir else rel.count(os.sep) + 1
+        dirnames[:] = [
+            d for d in dirnames if not d.startswith(".") and d not in skip_dirs
+        ]
+        if depth >= max_depth:
+            dirnames[:] = []  # do not descend past max_depth
+        for name in filenames:
+            if name.endswith(".py"):
+                path = os.path.join(dirpath, name)
+                if looks_like_processor(path):
+                    found.append(path)
+    return sorted(found)
+
+
 def main(argv):
     """Execution starts here."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--auto-fix",
         choices=["yes", "no"],
-        default="yes",
-        help="automatically fix fixable issues in place (default: yes)",
+        default=None,
+        help="automatically fix fixable issues in place (default: yes when files "
+        "are given, no when auto-discovering)",
     )
     parser.add_argument(
         "--disable",
@@ -1909,9 +1960,13 @@ def main(argv):
         metavar="CODES",
         help="comma-separated check IDs to skip entirely, e.g. --disable E005,E020",
     )
-    parser.add_argument("files", nargs="*", help="processor .py files to check")
+    parser.add_argument(
+        "files",
+        nargs="*",
+        help="processor .py files to check; if omitted, all processor-looking .py "
+        "files in the current folder and up to 3 subfolders deep are checked",
+    )
     args = parser.parse_args(argv)
-    auto_fix = args.auto_fix == "yes"
 
     disabled = {
         code.strip().upper() for code in args.disable.split(",") if code.strip()
@@ -1922,12 +1977,21 @@ def main(argv):
             f"warning: ignoring unknown --disable code(s): {', '.join(sorted(unknown))}"
         )
 
+    # No files given -> discover processor-looking .py files (<= 3 subfolders deep).
+    discovering = not args.files
+    paths = args.files if args.files else discover_processor_files(".", max_depth=3)
+
+    # auto-fix defaults to yes for explicit files, no when auto-discovering; an
+    # explicit --auto-fix always wins.
+    if args.auto_fix is not None:
+        auto_fix = args.auto_fix == "yes"
+    else:
+        auto_fix = not discovering
+
     issue_count = 0
     fix_count = 0
     warning_count = 0
-    for path, issues, fixed in check_files(
-        args.files, auto_fix=auto_fix, disabled=disabled
-    ):
+    for path, issues, fixed in check_files(paths, auto_fix=auto_fix, disabled=disabled):
         for lineno, check_id, message in fixed:
             fix_count += 1
             print(f"{path}:{lineno}: [{check_id}] auto-fixed: {message}")
