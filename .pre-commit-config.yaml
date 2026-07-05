@@ -68,7 +68,7 @@ repos:
         files: \.bes$
         args:
           [
-            "--ref-file=test/example.test_file",
+            "--ref-file=tests/examples/example.test_file",
             "--re-pattern=(?i)<Title>(.+)</Title>",
           ]
   - repo: local
@@ -118,7 +118,7 @@ repos:
     hooks:
       - id: try-repo
         name: try-repo
-        entry: pre-commit try-repo . --files test/example.test_file test/example-test.bes
+        entry: pre-commit try-repo . --files tests/examples/example.test_file tests/examples/example-test.bes
         language: system
         pass_filenames: False
         require_serial: True

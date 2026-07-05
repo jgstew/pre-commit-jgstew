@@ -45,7 +45,7 @@ def main(argv=None):
     return_value = 0
     for filename in args.filenames:
         exit_code = 0
-        # git diff --cached --ignore-all-space --diff-filter=M -G 'v[0-9]' test/example.test_file
+        # git diff --cached --ignore-all-space --diff-filter=M -G 'v[0-9]' tests/examples/example.test_file
         # git diff --cached --exit-code --ignore-all-space --diff-filter=M -G "<SourceReleaseDate>.+</SourceReleaseDate>" "$FILEPATH"
         sub_command = [
             "git",

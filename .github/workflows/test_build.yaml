@@ -74,4 +74,4 @@ jobs:
         run: pip install pre-commit
       - name: pre-commit try-repo
         shell: bash
-        run: pre-commit try-repo . --files test/example.test_file test/example-test.bes test/nested-sample.plist
+        run: pre-commit try-repo . --files tests/examples/example.test_file tests/examples/example-test.bes tests/examples/nested-sample.plist

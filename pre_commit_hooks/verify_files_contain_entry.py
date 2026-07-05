@@ -19,7 +19,7 @@ def build_argument_parser():
     )
     parser.add_argument(
         "--ref-file",
-        default="test/example.test_file",
+        default="tests/examples/example.test_file",
         help="reference file to search within",
     )
 
