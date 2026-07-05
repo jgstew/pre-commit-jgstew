@@ -65,6 +65,15 @@ autopkglib (`import autopkglib` or `from autopkglib import ...`) is not a
 processor, so it is skipped with a non-failing W001 warning rather than flagged
 with conventions that do not apply to it.
 
+Two exceptions are still treated as processors even without that import: a file
+that already defines a class subclassing a known processor base, and a small
+stub (at most STUB_MAX_LINES non-blank lines) that lives in a folder whose name
+contains "processor" (e.g. SharedProcessors). The latter is how a brand-new,
+nearly-empty file is built out: the auto-fixers add the shebang, header,
+docstring, the autopkglib import (E031), a class stub, `__all__`, and the
+`__main__` guard, turning it into a complete processor. Dunder files
+(`__init__.py`) and files carrying the skip marker are never treated this way.
+
 A file can also opt out of all checks explicitly with a top-of-file comment:
     # pre-commit-skip: processor-conventions
 
@@ -84,6 +93,14 @@ import sys
 
 SKIP_MARKER = "pre-commit-skip: processor-conventions"
 EXPECTED_SHEBANG = "#!/usr/local/autopkg/python"
+
+# A small .py file inside a folder whose name contains "processor" (case-
+# insensitive, e.g. SharedProcessors) is treated as a not-yet-written processor
+# stub: it is validated (and auto-fixed) rather than skipped as a non-processor,
+# so the auto-fixers can build it out into a real processor. "Small" means at
+# most this many non-blank lines.
+PROCESSOR_FOLDER_HINT = "processor"
+STUB_MAX_LINES = 15
 
 # Inline markers (a trailing comment, or a comment on the line above) that exempt
 # a single line from a warning. Used for intentional, reviewed exceptions.
@@ -172,6 +189,7 @@ KNOWN_CODES = frozenset(
         "E028",  # print() used instead of self.output()
         "E029",  # output_variable declared but never set
         "E030",  # reads an undeclared env key
+        "E031",  # missing an autopkglib import (added when building out a stub)
         "W001",  # not an AutoPkg processor
         "W002",  # file not found
         "W003",  # __main__ guard not at end of file
@@ -843,6 +861,25 @@ def check_processor_error_import(info):
     """E005: `ProcessorError` should be imported from autopkglib (convention)."""
     if "ProcessorError" not in info.imports:
         return [(1, "E005", "should import `ProcessorError` from autopkglib")]
+    return []
+
+
+def check_autopkglib_import(tree):
+    """E031: a processor must import from autopkglib.
+
+    This is normally guaranteed by the W001 gate, but a file kept in scope as a
+    new-processor stub or by subclassing a known base can still be missing it.
+    Auto-fixed by maybe_fix_autopkglib_import; reported here otherwise.
+    """
+    if not imports_autopkglib(tree):
+        return [
+            (
+                1,
+                "E031",
+                "processor must import from autopkglib "
+                "(e.g. `from autopkglib import Processor, ProcessorError`)",
+            )
+        ]
     return []
 
 
@@ -1659,6 +1696,51 @@ def variable_example_lines(kind, indent):
     ]
 
 
+def maybe_fix_autopkglib_import(path):
+    """Auto-fix E031: add `from autopkglib import Processor, ProcessorError`.
+
+    Every processor must import from autopkglib; a brand-new stub may not yet.
+    The import is inserted after the last existing top-level import if there is
+    one, otherwise after the module docstring (with a separating blank line), and
+    failing that at the very top of the file. Returns the fixed entry, or None
+    when the import is already present.
+    """
+    with open(path, encoding="utf-8") as handle:
+        src = handle.read()
+    tree = ast.parse(src)
+    if imports_autopkglib(tree):
+        return None
+
+    last_import = None
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            last_import = node
+    docstring_end = None
+    if (
+        tree.body
+        and isinstance(tree.body[0], ast.Expr)
+        and isinstance(tree.body[0].value, ast.Constant)
+        and isinstance(tree.body[0].value.value, str)
+    ):
+        docstring_end = tree.body[0].end_lineno
+
+    import_line = "from autopkglib import Processor, ProcessorError"
+    lines = src.split("\n")
+    if last_import is not None:
+        insert_at = last_import.end_lineno or last_import.lineno
+        lines[insert_at:insert_at] = [import_line]
+        reported = insert_at + 1
+    elif docstring_end is not None:
+        lines[docstring_end:docstring_end] = ["", import_line]
+        reported = docstring_end + 2
+    else:
+        lines[0:0] = [import_line, ""]
+        reported = 1
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+    return (reported, "E031", f"added `{import_line}`")
+
+
 def maybe_fix_create_class(path, stem):
     """Auto-fix E010 (no class found): append a minimal processor class stub.
 
@@ -1749,7 +1831,14 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
     # A .py file that doesn't import autopkglib is not a processor (a helper
     # script, shared util, etc.). Warn and skip rather than flag it with dozens
     # of irrelevant violations. W001 is a warning: it does not fail the hook.
-    if not imports_autopkglib(tree):
+    # Exceptions still treated as processors: a file that already subclasses a
+    # known base, and a small new-processor stub in a *Processor* folder -- both
+    # get built out / flagged instead of skipped (see is_new_processor_stub).
+    if (
+        not imports_autopkglib(tree)
+        and not has_processor_subclass(tree)
+        and not is_new_processor_stub(path, src)
+    ):
         return [
             (
                 1,
@@ -1810,12 +1899,27 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
                 )
             )
 
+    # --- E031: a processor must import from autopkglib. A new stub may not yet;
+    # add the import now that the shebang/header/docstring are in place, and
+    # before the E010 class stub (which references Processor) is created. This
+    # turns the stub into a real, self-identifying processor. Re-analyze so the
+    # remaining fixes chain against the updated file. ---
+    if auto_fix and "E031" not in disabled and not imports_autopkglib(tree):
+        import_fixed = maybe_fix_autopkglib_import(path)
+        if import_fixed:
+            fixed.append(import_fixed)
+            more_issues, more_fixed = check_file(
+                path, auto_fix=auto_fix, disabled=disabled
+            )
+            return more_issues, fixed + more_fixed
+
     # --- module-level checks ---
     source_lines = src.splitlines()
     info = scan_module(tree)
     issues += check_all_declared(info)  # E003
     issues += check_all_defined(tree, info)  # E026
     issues += check_processor_error_import(info)  # E005
+    issues += check_autopkglib_import(tree)  # E031
     issues += check_test_recipe(path, stem)  # W005
     issues += check_platform_imports(tree, source_lines)  # W006
     issues += check_hardcoded_paths(tree, source_lines)  # W008
@@ -1900,12 +2004,62 @@ def check_files(paths, auto_fix=True, disabled=frozenset()):
     return results
 
 
-def looks_like_processor(path):
-    """True if a .py file appears to be an AutoPkg processor (imports autopkglib).
+def has_processor_subclass(tree):
+    """True if the module defines a top-level class subclassing a known base.
 
-    Used by discovery so plain scripts, helpers, and tests are silently skipped.
-    Uses the AST when the file parses; falls back to a text check so a processor
-    with a syntax error is still picked up (and reported as E000).
+    Lets a file that clearly intends to be a processor (e.g. `class X(Processor)`)
+    be validated even if the autopkglib import is missing, so E004/E005/E031 can
+    report it (and a half-built stub keeps being built out on re-analysis).
+    """
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and set(base_names(node)) & KNOWN_BASES:
+            return True
+    return False
+
+
+def in_processor_folder(path):
+    """True if the file's immediate parent folder name contains "processor".
+
+    Case-insensitive, matching SharedProcessors, SharedDangerousProcessors, etc.
+    """
+    parent = os.path.basename(os.path.dirname(os.path.abspath(path)))
+    return PROCESSOR_FOLDER_HINT in parent.lower()
+
+
+def is_new_processor_stub(path, src=None):
+    """True if `path` is a small stub in a *Processor* folder meant to be built out.
+
+    A brand-new, nearly-empty .py file in a folder whose name contains "processor"
+    is taken to be a new processor a developer just started: it is validated and
+    auto-fixed into a real processor rather than skipped as a non-processor.
+    Dunder files (e.g. __init__.py) and files with the skip marker never qualify.
+    `src` may be passed to avoid re-reading a file already in hand.
+    """
+    if not in_processor_folder(path):
+        return False
+    if os.path.basename(path).startswith("__"):
+        return False
+    if src is None:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                src = handle.read()
+        except OSError:
+            return False
+    if SKIP_MARKER in src:
+        return False
+    non_blank = [line for line in src.splitlines() if line.strip()]
+    return len(non_blank) <= STUB_MAX_LINES
+
+
+def looks_like_processor(path):
+    """True if a .py file appears to be an AutoPkg processor.
+
+    A processor either imports autopkglib, already subclasses a known processor
+    base, or is a small new-processor stub in a *Processor* folder (see
+    is_new_processor_stub). Discovery uses this so plain scripts, helpers, and
+    tests are silently skipped while stubs are picked up and built out. Uses the
+    AST when the file parses; falls back to a text check so a processor with a
+    syntax error is still picked up (and reported as E000).
     """
     try:
         with open(path, encoding="utf-8", errors="replace") as handle:
@@ -1913,9 +2067,14 @@ def looks_like_processor(path):
     except OSError:
         return False
     try:
-        return imports_autopkglib(ast.parse(src))
+        tree = ast.parse(src)
     except SyntaxError:
-        return "autopkglib" in src
+        return "autopkglib" in src or is_new_processor_stub(path, src)
+    return (
+        imports_autopkglib(tree)
+        or has_processor_subclass(tree)
+        or is_new_processor_stub(path, src)
+    )
 
 
 def discover_processor_files(root=".", max_depth=3):
@@ -1923,7 +2082,8 @@ def discover_processor_files(root=".", max_depth=3):
 
     Descends at most `max_depth` subfolders deep (root itself is depth 0). Hidden
     directories and common noise (__pycache__, node_modules) are pruned. Only
-    files that look like processors are returned; other .py files are ignored.
+    files that look like processors are returned (including new-processor stubs in
+    *Processor* folders); other .py files are ignored.
     """
     skip_dirs = {"__pycache__", "node_modules"}
     root = os.path.normpath(root)
