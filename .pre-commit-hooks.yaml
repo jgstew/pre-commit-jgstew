@@ -88,3 +88,15 @@
   args:
     - "--functions=main"
     - "--docstring=Execution starts here."
+- id: check-processor-conventions
+  name: Check AutoPkg processor conventions
+  description: >
+    Picky, opinionated checks for AutoPkg processor .py files (boilerplate,
+    docstrings, input/output_variables, __main__ guard, etc.). Auto-fixes the
+    fixable issues in place and can build out a new-processor stub; exits 1 when
+    anything was fixed or any issue remains so the author re-stages and commits
+    again. Non-processor files are skipped with a non-failing warning.
+  language: python
+  pass_filenames: True
+  entry: check-processor-conventions
+  types: [python]

@@ -130,3 +130,16 @@ repos:
         entry: python pre_commit_hooks/add_main_docstring.py
         language: system
         pass_filenames: True
+  - repo: local
+    hooks:
+      # This repo has no AutoPkg processors of its own, so this is a manual-stage
+      # smoke test (report-only). Downstream AutoPkg repos use the published
+      # `check-processor-conventions` hook; see README / jgstew-recipes.
+      - id: check-processor-conventions
+        name: check-processor-conventions-local
+        entry: python pre_commit_hooks/autopkg_processor_check_conventions.py
+        language: system
+        pass_filenames: True
+        args: ["--auto-fix=no"]
+        types: [python]
+        stages: [manual]

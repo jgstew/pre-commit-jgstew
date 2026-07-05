@@ -2104,8 +2104,13 @@ def discover_processor_files(root=".", max_depth=3):
     return sorted(found)
 
 
-def main(argv):
-    """Execution starts here."""
+def main(argv=None):
+    """Execution starts here.
+
+    argv defaults to None so this works both as a console_scripts entry point
+    (pre-commit calls it with no arguments; argparse then reads sys.argv) and
+    when called directly as `main(sys.argv[1:])`.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--auto-fix",
