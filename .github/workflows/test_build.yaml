@@ -38,6 +38,11 @@ jobs:
       - name: Test python import from src
         shell: bash
         run: python -c "import pre_commit_hooks; print(pre_commit_hooks.__version__)"
+      - name: Run pytest
+        shell: bash
+        run: |
+          pip install pytest
+          python -m pytest -q
       - name: Install build tools
         run: pip install setuptools wheel build
       - name: Get version from setup.cfg
