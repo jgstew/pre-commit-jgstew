@@ -50,21 +50,25 @@ repos:
       - id: verify-files-are-ascii
   # Local Hooks:
   # https://towardsdatascience.com/getting-started-with-python-pre-commit-hooks-28be2b2d09d5
-  # these use `python3` (bare `python` is absent on many systems, e.g. macOS)
+  # language: python -> pre-commit provisions an isolated venv, so bare `python`
+  # always resolves (no dependence on a system `python` shim). Third-party
+  # imports must be declared via additional_dependencies.
   - repo: local
     hooks:
       - id: validate-bes-local
         name: validate-bes-local
-        entry: python3 pre_commit_hooks/validate_bes.py
-        language: system
+        entry: python pre_commit_hooks/validate_bes.py
+        language: python
+        # isolated venv: declare the third-party import used by validate_bes.py
+        additional_dependencies: [validate_bes_xml]
         pass_filenames: True
         files: \.(bes|ojo)$
   - repo: local
     hooks:
       - id: verify-files-contain-entry-local
         name: verify-files-contain-entry-local
-        entry: python3 pre_commit_hooks/verify_files_contain_entry.py
-        language: system
+        entry: python pre_commit_hooks/verify_files_contain_entry.py
+        language: python
         pass_filenames: True
         files: \.bes$
         args:
@@ -76,8 +80,8 @@ repos:
     hooks:
       - id: verify-files-contain-pattern-local
         name: verify-files-contain-pattern-local
-        entry: python3 pre_commit_hooks/verify_files_contain_pattern.py
-        language: system
+        entry: python pre_commit_hooks/verify_files_contain_pattern.py
+        language: python
         pass_filenames: True
         files: \.test_file$
         args: ["--re-pattern=(?i)Example"]
@@ -85,8 +89,8 @@ repos:
     hooks:
       - id: minimum-changes-local
         name: minimum-changes-local
-        entry: python3 pre_commit_hooks/minimum_changes.py
-        language: system
+        entry: python pre_commit_hooks/minimum_changes.py
+        language: python
         pass_filenames: True
         args: [--min-changes=2, --auto-revert]
         files: .test_file
@@ -94,15 +98,15 @@ repos:
     hooks:
       - id: git-clean
         name: git-clean-local
-        entry: python3 pre_commit_hooks/git_clean.py
-        language: system
+        entry: python pre_commit_hooks/git_clean.py
+        language: python
         files: .test_file
   - repo: local
     hooks:
       - id: revert-missing-change
         name: revert-missing-change-local
-        entry: python3 pre_commit_hooks/revert_missing_change.py
-        language: system
+        entry: python pre_commit_hooks/revert_missing_change.py
+        language: python
         pass_filenames: True
         args: ['--change_regex=v[0-9]+(\.[0-9]+)*\s*</Title>']
         files: .test_file
@@ -110,8 +114,8 @@ repos:
     hooks:
       - id: github-action-set-output-fix
         name: github-action-set-output-fix-local
-        entry: python3 pre_commit_hooks/github_action_set_output_fix.py
-        language: system
+        entry: python pre_commit_hooks/github_action_set_output_fix.py
+        language: python
         pass_filenames: True
         args: ['--overwrite']
         files: \.(yaml|yml)$
@@ -128,8 +132,8 @@ repos:
     hooks:
       - id: add-missing-docstrings
         name: add-missing-docstrings
-        entry: python3 pre_commit_hooks/add_main_docstring.py
-        language: system
+        entry: python pre_commit_hooks/add_main_docstring.py
+        language: python
         pass_filenames: True
   - repo: local
     hooks:
@@ -138,8 +142,8 @@ repos:
       # `check-processor-conventions` hook; see README / jgstew-recipes.
       - id: check-processor-conventions
         name: check-processor-conventions-local
-        entry: python3 pre_commit_hooks/autopkg_processor_check_conventions.py
-        language: system
+        entry: python pre_commit_hooks/autopkg_processor_check_conventions.py
+        language: python
         pass_filenames: True
         args: ["--auto-fix=no"]
         types: [python]
