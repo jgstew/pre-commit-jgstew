@@ -21,3 +21,9 @@ def test_valid_plist_passes():
 
 def test_no_files_is_zero():
     assert hook.main([]) == 0
+
+
+def test_malformed_plist_fails(tmp_path):
+    bad = tmp_path / "bad.plist"
+    bad.write_text("<plist><dict><key>x</key></dict>", encoding="utf-8")
+    assert hook.main([str(bad)]) == 1

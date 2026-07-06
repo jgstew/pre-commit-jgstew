@@ -98,3 +98,31 @@ def test_main_no_args_exits(tmp_path, monkeypatch):
     monkeypatch.setattr(sys, "argv", ["add-missing-docstrings"])
     with pytest.raises(SystemExit):
         hook.main()
+
+
+def test_main_processes_directory(tmp_path, monkeypatch):
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "m.py").write_text(MISSING, encoding="utf-8")
+    (pkg / "already.py").write_text(HAS_DOCSTRING, encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["add-missing-docstrings", str(pkg)])
+    hook.main()
+    assert f'"""{hook.DOCSTRING}"""' in (pkg / "m.py").read_text()
+
+
+def test_main_skips_hidden_directories(tmp_path, monkeypatch):
+    hidden = tmp_path / ".venv"
+    hidden.mkdir()
+    (hidden / "m.py").write_text(MISSING, encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["add-missing-docstrings", str(tmp_path)])
+    hook.main()
+    # files under a dotted dir are skipped -> left untouched
+    assert (hidden / "m.py").read_text() == MISSING
+
+
+def test_main_skips_non_python_file(tmp_path, monkeypatch, capsys):
+    txt = tmp_path / "notes.txt"
+    txt.write_text("not python\n", encoding="utf-8")
+    monkeypatch.setattr(sys, "argv", ["add-missing-docstrings", str(txt)])
+    hook.main()
+    assert "Skipping non-Python file" in capsys.readouterr().out

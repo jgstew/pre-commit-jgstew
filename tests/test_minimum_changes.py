@@ -29,6 +29,15 @@ def test_no_staged_change_passes(git_repo, monkeypatch):
     assert hook.main(["--min-changes=2", "f.txt"]) == 0
 
 
+def test_exactly_min_changes_passes(git_repo, monkeypatch):
+    git_repo.write("f.txt", "line1\n")
+    git_repo.commit_all()
+    git_repo.write("f.txt", "line1\na\nb\n")  # +2 lines, min is 2 -> boundary passes
+    git_repo.stage("f.txt")
+    monkeypatch.chdir(git_repo.path)
+    assert hook.main(["--min-changes=2", "f.txt"]) == 0
+
+
 def test_auto_revert_unstages_small_change(git_repo, monkeypatch):
     git_repo.write("f.txt", "line1\n")
     git_repo.commit_all()

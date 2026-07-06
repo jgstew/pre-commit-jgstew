@@ -59,8 +59,11 @@ def main(argv=None):
             filename,
         ]
         try:
-            output = subprocess.check_output(sub_command, shell=True)
-            if output != "":
+            # NOTE: sub_command is a list, so do NOT pass shell=True -- on POSIX
+            # that would run only `git` (the diff args get dropped), so the
+            # command always errored and the "missing change" branch never ran.
+            output = subprocess.check_output(sub_command)
+            if output:
                 print(output.decode().strip())
         except subprocess.CalledProcessError as subprocerr:
             exit_code = subprocerr.returncode

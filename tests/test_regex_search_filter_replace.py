@@ -72,3 +72,16 @@ def test_custom_search_filter_replace(tmp_path):
         == 1
     )
     assert open(path).read() == "color: red;\n"
+
+
+def test_nonexistent_file_is_rejected_by_argparse(tmp_path):
+    # filenames use type=validate_filepath, so a missing path is an argparse error
+    with pytest.raises(SystemExit):
+        hook.main([str(tmp_path / "missing.xml")])
+
+
+def test_filter_not_within_search_match_raises(tmp_path):
+    # the search matches but the filter finds nothing inside it -> IndexError
+    path = write(tmp_path, "a.xml", "<a>x</a>\n\n\n<b>y</b>\n")
+    with pytest.raises(IndexError):
+        hook.main(["--search=<a>x</a>", "--filter=ZZZ", "--replace=q", path])

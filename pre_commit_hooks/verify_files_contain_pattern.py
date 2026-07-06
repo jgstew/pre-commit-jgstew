@@ -31,9 +31,18 @@ def build_argument_parser():
     parser.add_argument(
         # NOTE: this has no effect if --num-matches=0
         "--allow-extra",
+        dest="allow_extra",
         default=True,
         action="store_true",
-        help="pass files that have more than num-matches matches found",
+        help="pass files that have more than num-matches matches found (default)",
+    )
+    parser.add_argument(
+        # counterpart to --allow-extra so it can actually be turned off; without
+        # this, --allow-extra (store_true, default True) could never be False.
+        "--no-allow-extra",
+        dest="allow_extra",
+        action="store_false",
+        help="fail files that have more than num-matches matches found",
     )
     parser.add_argument(
         "--append-filepath",

@@ -29,3 +29,9 @@ def test_auto_clean_removes_untracked(git_repo, monkeypatch):
     monkeypatch.chdir(git_repo.path)
     assert hook.git_clean(auto_clean=True) == 1
     assert not junk.exists()
+
+
+def test_outside_git_repo_is_handled(tmp_path, monkeypatch):
+    # `git clean` fails outside a repo; the error is caught and 0 is returned
+    monkeypatch.chdir(tmp_path)
+    assert hook.git_clean(auto_clean=False) == 0

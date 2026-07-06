@@ -21,3 +21,16 @@ def test_valid_bes_passes():
 
 def test_no_files_is_zero():
     assert hook.main([]) == 0
+
+
+def test_malformed_bes_fails(tmp_path):
+    bad = tmp_path / "bad.bes"
+    bad.write_text("<BES><Task><Unclosed></Task></BES>", encoding="utf-8")
+    assert hook.main([str(bad)]) == 1
+
+
+def test_mixed_valid_and_invalid_counts_only_bad(tmp_path):
+    bad = tmp_path / "bad.bes"
+    bad.write_text("<BES><Task><Unclosed></Task></BES>", encoding="utf-8")
+    good = str(EXAMPLES / "example-test.bes")
+    assert hook.main([good, str(bad)]) == 1
