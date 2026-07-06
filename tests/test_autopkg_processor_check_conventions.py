@@ -99,9 +99,7 @@ def test_imports_autopkglib(src, expected):
 # in_processor_folder / is_new_processor_stub / has_processor_subclass
 # --------------------------------------------------------------------------- #
 def test_in_processor_folder(tmp_path):
-    assert checker.in_processor_folder(
-        write(tmp_path / "SharedProcessors", "A.py", "")
-    )
+    assert checker.in_processor_folder(write(tmp_path / "SharedProcessors", "A.py", ""))
     assert checker.in_processor_folder(
         write(tmp_path / "SharedDangerousProcessors", "B.py", "")
     )
@@ -193,9 +191,7 @@ def test_missing_module_docstring_reports_e002(tmp_path):
 
 def test_missing_processorerror_import_reports_e005(tmp_path):
     src = (
-        "#!/usr/local/autopkg/python\n"
-        '"""x"""\n'
-        "from autopkglib import Processor\n"
+        "#!/usr/local/autopkg/python\n" '"""x"""\n' "from autopkglib import Processor\n"
     )
     path = write(tmp_path / "SharedProcessors", "OnlyProc.py", src)
     issues, _fixed = checker.check_file(path, auto_fix=False)
@@ -265,7 +261,7 @@ def test_check_files_disable_filters_codes(tmp_path):
     src = "#!/usr/local/autopkg/python\nimport autopkglib\n"  # missing docstring
     path = write(tmp_path / "SharedProcessors", "NoDoc2.py", src)
     results = checker.check_files([path], auto_fix=False, disabled={"E002"})
-    (_p, issues, _fixed) = results[0]
+    _p, issues, _fixed = results[0]
     assert "E002" not in codes(issues)
 
 
@@ -292,7 +288,9 @@ def test_discover_processor_files(tmp_path):
 def test_discover_respects_max_depth(tmp_path):
     root = tmp_path / "repo"
     # depth 4 (deeper than max_depth=3) should be pruned
-    deep = write(root / "a" / "b" / "c" / "SharedProcessors", "Deep.py", CLEAN_PROCESSOR)
+    deep = write(
+        root / "a" / "b" / "c" / "SharedProcessors", "Deep.py", CLEAN_PROCESSOR
+    )
     found = set(checker.discover_processor_files(str(root), max_depth=3))
     assert deep not in found
 
