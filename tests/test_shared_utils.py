@@ -1,5 +1,7 @@
 """Tests for pre_commit_hooks/shared_utils.py."""
 
+import subprocess
+
 import pytest
 
 from pre_commit_hooks import shared_utils
@@ -40,3 +42,10 @@ def test_revert_file_restores_committed_content(git_repo, monkeypatch):
     monkeypatch.chdir(git_repo.path)
     shared_utils.revert_file("f.txt")
     assert (git_repo.path / "f.txt").read_text() == "original\n"
+
+
+def test_revert_file_raises_outside_git_repo(tmp_path, monkeypatch):
+    # negative counterpart: git fails outside a repo -> the error propagates
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(subprocess.CalledProcessError):
+        shared_utils.revert_file("whatever.txt")

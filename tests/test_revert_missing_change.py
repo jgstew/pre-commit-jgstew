@@ -1,5 +1,9 @@
 """Tests for pre_commit_hooks/revert_missing_change.py."""
 
+import subprocess
+
+import pytest
+
 from pre_commit_hooks import revert_missing_change as hook
 
 
@@ -47,3 +51,10 @@ def test_revert_file_restores_committed_content(git_repo, monkeypatch):
     monkeypatch.chdir(git_repo.path)
     hook.revert_file("f.txt")
     assert (git_repo.path / "f.txt").read_text() == "original\n"
+
+
+def test_revert_file_raises_outside_git_repo(tmp_path, monkeypatch):
+    # negative counterpart: git fails outside a repo -> the error propagates
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(subprocess.CalledProcessError):
+        hook.revert_file("whatever.txt")

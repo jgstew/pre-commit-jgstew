@@ -48,6 +48,17 @@ repos:
       - id: minimum-changes
         args: [--min-changes=0]
       - id: verify-files-are-ascii
+
+  # - repo: https://github.com/christophmeissner/pytest-pre-commit
+  #   rev: 1.0.0
+  #   hooks:
+  #     - id: pytest
+  #       pass_filenames: false
+  #       always_run: true
+  #       stages: [manual]
+  #       additional_dependencies:
+  #         - validate_bes_xml
+
   # Local Hooks:
   # https://towardsdatascience.com/getting-started-with-python-pre-commit-hooks-28be2b2d09d5
   # language: python -> pre-commit provisions an isolated venv, so bare `python`

@@ -189,6 +189,14 @@ def test_missing_module_docstring_reports_e002(tmp_path):
     assert "E002" in codes(issues)
 
 
+def test_module_docstring_present_no_e002(tmp_path):
+    # positive counterpart: a docstring is present -> E002 must NOT fire
+    src = '#!/usr/local/autopkg/python\n"""A module docstring."""\nimport autopkglib\n'
+    path = write(tmp_path / "SharedProcessors", "HasDoc.py", src)
+    issues, _fixed = checker.check_file(path, auto_fix=False)
+    assert "E002" not in codes(issues)
+
+
 def test_missing_processorerror_import_reports_e005(tmp_path):
     src = (
         "#!/usr/local/autopkg/python\n" '"""x"""\n' "from autopkglib import Processor\n"
@@ -196,6 +204,18 @@ def test_missing_processorerror_import_reports_e005(tmp_path):
     path = write(tmp_path / "SharedProcessors", "OnlyProc.py", src)
     issues, _fixed = checker.check_file(path, auto_fix=False)
     assert "E005" in codes(issues)
+
+
+def test_processorerror_imported_no_e005(tmp_path):
+    # positive counterpart: ProcessorError is imported -> E005 must NOT fire
+    src = (
+        "#!/usr/local/autopkg/python\n"
+        '"""x"""\n'
+        "from autopkglib import Processor, ProcessorError\n"
+    )
+    path = write(tmp_path / "SharedProcessors", "BothImports.py", src)
+    issues, _fixed = checker.check_file(path, auto_fix=False)
+    assert "E005" not in codes(issues)
 
 
 def test_missing_autopkglib_import_reports_e031(tmp_path):
@@ -209,6 +229,20 @@ def test_missing_autopkglib_import_reports_e031(tmp_path):
     path = write(tmp_path / "SharedProcessors", "WithBase.py", src)
     issues, _fixed = checker.check_file(path, auto_fix=False)
     assert "E031" in codes(issues)
+
+
+def test_autopkglib_imported_no_e031(tmp_path):
+    # positive counterpart: autopkglib is imported -> E031 must NOT fire
+    src = (
+        "#!/usr/local/autopkg/python\n"
+        '"""x"""\n'
+        "from autopkglib import Processor, ProcessorError\n"
+        "class WithBase(Processor):\n"
+        '    """d"""\n'
+    )
+    path = write(tmp_path / "SharedProcessors", "HasImport.py", src)
+    issues, _fixed = checker.check_file(path, auto_fix=False)
+    assert "E031" not in codes(issues)
 
 
 # --------------------------------------------------------------------------- #
