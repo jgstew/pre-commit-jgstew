@@ -2,6 +2,7 @@
 # run on only items staged in git:  pre-commit
 # automatically run on commit:      pre-commit install
 # check all files in repo:          pre-commit run --all-files
+# check all files in repo:          pre-commit run --all-files --hook-stage manual
 # update all pre-commit hooks:      pre-commit autoupdate
 # https://github.com/pre-commit/pre-commit-hooks
 repos:
@@ -49,12 +50,12 @@ repos:
       - id: verify-files-are-ascii
   # Local Hooks:
   # https://towardsdatascience.com/getting-started-with-python-pre-commit-hooks-28be2b2d09d5
-  # the following might not work everywhere due to using `python` instead of `python3`
+  # these use `python3` (bare `python` is absent on many systems, e.g. macOS)
   - repo: local
     hooks:
       - id: validate-bes-local
         name: validate-bes-local
-        entry: python pre_commit_hooks/validate_bes.py
+        entry: python3 pre_commit_hooks/validate_bes.py
         language: system
         pass_filenames: True
         files: \.(bes|ojo)$
@@ -62,7 +63,7 @@ repos:
     hooks:
       - id: verify-files-contain-entry-local
         name: verify-files-contain-entry-local
-        entry: python pre_commit_hooks/verify_files_contain_entry.py
+        entry: python3 pre_commit_hooks/verify_files_contain_entry.py
         language: system
         pass_filenames: True
         files: \.bes$
@@ -75,7 +76,7 @@ repos:
     hooks:
       - id: verify-files-contain-pattern-local
         name: verify-files-contain-pattern-local
-        entry: python pre_commit_hooks/verify_files_contain_pattern.py
+        entry: python3 pre_commit_hooks/verify_files_contain_pattern.py
         language: system
         pass_filenames: True
         files: \.test_file$
@@ -84,7 +85,7 @@ repos:
     hooks:
       - id: minimum-changes-local
         name: minimum-changes-local
-        entry: python pre_commit_hooks/minimum_changes.py
+        entry: python3 pre_commit_hooks/minimum_changes.py
         language: system
         pass_filenames: True
         args: [--min-changes=2, --auto-revert]
@@ -93,14 +94,14 @@ repos:
     hooks:
       - id: git-clean
         name: git-clean-local
-        entry: python pre_commit_hooks/git_clean.py
+        entry: python3 pre_commit_hooks/git_clean.py
         language: system
         files: .test_file
   - repo: local
     hooks:
       - id: revert-missing-change
         name: revert-missing-change-local
-        entry: python pre_commit_hooks/revert_missing_change.py
+        entry: python3 pre_commit_hooks/revert_missing_change.py
         language: system
         pass_filenames: True
         args: ['--change_regex=v[0-9]+(\.[0-9]+)*\s*</Title>']
@@ -109,7 +110,7 @@ repos:
     hooks:
       - id: github-action-set-output-fix
         name: github-action-set-output-fix-local
-        entry: python pre_commit_hooks/github_action_set_output_fix.py
+        entry: python3 pre_commit_hooks/github_action_set_output_fix.py
         language: system
         pass_filenames: True
         args: ['--overwrite']
@@ -127,7 +128,7 @@ repos:
     hooks:
       - id: add-missing-docstrings
         name: add-missing-docstrings
-        entry: python pre_commit_hooks/add_main_docstring.py
+        entry: python3 pre_commit_hooks/add_main_docstring.py
         language: system
         pass_filenames: True
   - repo: local
@@ -137,7 +138,7 @@ repos:
       # `check-processor-conventions` hook; see README / jgstew-recipes.
       - id: check-processor-conventions
         name: check-processor-conventions-local
-        entry: python pre_commit_hooks/autopkg_processor_check_conventions.py
+        entry: python3 pre_commit_hooks/autopkg_processor_check_conventions.py
         language: system
         pass_filenames: True
         args: ["--auto-fix=no"]
