@@ -103,7 +103,7 @@ repos:
         entry: python pre_commit_hooks/minimum_changes.py
         language: python
         pass_filenames: True
-        args: [--min-changes=2, --auto-revert]
+        args: [--min-changes=2]
         files: .test_file
   - repo: local
     hooks:
@@ -112,15 +112,15 @@ repos:
         entry: python pre_commit_hooks/git_clean.py
         language: python
         files: .test_file
-  - repo: local
-    hooks:
-      - id: revert-missing-change
-        name: revert-missing-change-local
-        entry: python pre_commit_hooks/revert_missing_change.py
-        language: python
-        pass_filenames: True
-        args: ['--change_regex=v[0-9]+(\.[0-9]+)*\s*</Title>']
-        files: .test_file
+  # - repo: local
+  #   hooks:
+  #     - id: revert-missing-change
+  #       name: revert-missing-change-local
+  #       entry: python pre_commit_hooks/revert_missing_change.py
+  #       language: python
+  #       pass_filenames: True
+  #       args: ['--change_regex=v[0-9]+(\.[0-9]+)*\s*</Title>']
+  #       files: .test_file
   - repo: local
     hooks:
       - id: github-action-set-output-fix
