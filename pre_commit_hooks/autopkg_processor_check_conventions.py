@@ -42,20 +42,33 @@ Non-fixable opinionated checks include: E020 (every input_variable needs a
 non-empty `description`), E024 (the class docstring is the processor's primary
 documentation -- a trivial one-liner or generated stub is rejected so it gets
 expanded and maintained), E026 (every name in `__all__` must be defined in the
-file -- need not be a class), and E029 (every declared output_variable must be
+file -- need not be a class), E029 (every declared output_variable must be
 set via self.env, unless it is also an input_variable -- declaring an input as an
-output too is a deliberate way to have AutoPkg re-display it in verbose runs).
+output too is a deliberate way to have AutoPkg re-display it in verbose runs), and
+E032 (the class name must be strict CamelCase: one capital per word, with capital
+runs allowed only for the built-in acronyms in ALLOWED_ACRONYMS -- URL, CURL; any
+other acronym, e.g. JSON/BES/PE/OLE/QR, is a per-processor exception marked with
+`# processor-name-ok`), and E033 (a processor's class docstring must be unique
+across the repo -- the docstring is the processor's description, so a verbatim
+duplicate is a copy-paste that no longer fits one of them; cross-file, opt out
+per-file with `# duplicate-docstring-ok`).
 E030 allows AutoPkg built-ins, ALL_CAPS external config/credential keys (e.g.
 BES_PASSWORD), keys the processor writes itself, and get() fallback defaults.
 
 Warnings (do not fail the hook): W003 (the `__main__` guard is not last in the
 file), W004 (writes a `self.env[...]` key not declared in output_variables),
-W005 (no Test-Recipes/<Name>*.test.recipe.yaml for this processor), W006 (imports
-a platform-specific module in a cross-platform repo), W007 (an input_variable is
-declared but never read from self.env), and W008 (a hardcoded user/machine-
-specific path). W004/W006/W007/W008 each accept a per-line opt-out comment
+W005 (no Test-Recipes/<Name>*.test.recipe.yaml for this processor -- auto-fixed
+when a sibling "*test*" folder exists, by writing a stub test recipe that calls
+the processor), W006 (imports a platform-specific module in a cross-platform
+repo), W007 (an input_variable is declared but never read from self.env),
+W008 (a hardcoded user/machine-specific path), and W009 (this processor is not
+listed in the recipe schema's Processor enum -- auto-fixed by appending its
+`com.github.jgstew.<folder>/<Name>` reference to that enum; opt out per-file with
+`# schema-enum-ok`), and W010 (an input/output variable key is not snake_case).
+W004/W006/W007/W008/W010 each accept a per-line opt-out comment
 (`# output-undeclared-ok`, `# platform-specific-ok`, `# input-unread-ok`,
-`# hardcoded-path-ok`) for reviewed, intentional exceptions.
+`# hardcoded-path-ok`, `# variable-name-ok`) for reviewed, intentional
+exceptions.
 
 A `print(...)` call that E028 cannot safely rewrite (multiple args, file=/sep=/
 end= kwargs, or a staticmethod) stays reported for a human to fix.
@@ -86,6 +99,7 @@ import argparse
 import ast
 import collections
 import datetime
+import json
 import os
 import re
 import subprocess
@@ -108,6 +122,29 @@ OUTPUT_UNDECLARED_MARKER = "output-undeclared-ok"  # W004
 PLATFORM_IMPORT_MARKER = "platform-specific-ok"  # W006
 INPUT_UNREAD_MARKER = "input-unread-ok"  # W007
 HARDCODED_PATH_MARKER = "hardcoded-path-ok"  # W008
+VARIABLE_NAME_MARKER = "variable-name-ok"  # W010
+PROCESSOR_NAME_MARKER = "processor-name-ok"  # E032
+DUPLICATE_DOCSTRING_MARKER = "duplicate-docstring-ok"  # E033 (file-level)
+
+# A snake_case variable-key name: a lowercase letter followed by lowercase
+# letters, digits, and underscores (W010). Keys that mirror an external field
+# (PE/MSI metadata, an HTTP header) or the AutoPkg ALL_CAPS config convention can
+# opt out with `# variable-name-ok`.
+SNAKE_CASE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+# A processor CLASS NAME must be strict CamelCase (E032): each word is a single
+# capital followed by lowercase/digits, with NO runs of capitals -- EXCEPT these
+# acronyms, kept to the ones AutoPkg's own built-in processors use (URLDownloader,
+# CURLDownloader, ...). Any OTHER acronym (JSON, BES, PE, OLE, QR, ...) is a
+# per-processor exception: mark that processor with `# processor-name-ok` rather
+# than widening this set. (E010 ties the class name to the filename, so this
+# effectively governs the filename too.)
+ALLOWED_ACRONYMS = frozenset(["URL", "CURL"])
+CAMEL_CASE_RE = re.compile(
+    r"^(?:"
+    + "|".join(re.escape(a) for a in sorted(ALLOWED_ACRONYMS))
+    + r"|[A-Z][a-z]+[0-9]*|[A-Z][0-9]+)+$"
+)
 
 # Platform-specific modules a cross-platform processor should not import
 # unconditionally (W006). A genuinely platform-specific processor can opt out
@@ -157,6 +194,12 @@ HARDCODED_PATH_RE = re.compile(
 # characters, so 40 cleanly separates genuine descriptions from stub placeholders.
 MIN_CLASS_DOCSTRING_LEN = 40
 
+# Convention for the stub test recipe the W005 auto-fix generates: it calls the
+# processor via `com.github.jgstew.<Folder>/<Name>` and is written into a sibling
+# folder whose name contains "test" (e.g. Test-Recipes/).
+RECIPE_IDENTIFIER_PREFIX = "com.github.jgstew."
+TEST_RECIPE_MIN_VERSION = "2.4.1"
+
 # Every check ID this tool can emit -- used to validate --disable arguments so a
 # typo (e.g. "E99") is reported rather than silently ignored.
 KNOWN_CODES = frozenset(
@@ -190,6 +233,8 @@ KNOWN_CODES = frozenset(
         "E029",  # output_variable declared but never set
         "E030",  # reads an undeclared env key
         "E031",  # missing an autopkglib import (added when building out a stub)
+        "E032",  # class name is not strict CamelCase (allowed acronyms excepted)
+        "E033",  # class docstring is identical to another processor's
         "W001",  # not an AutoPkg processor
         "W002",  # file not found
         "W003",  # __main__ guard not at end of file
@@ -198,8 +243,15 @@ KNOWN_CODES = frozenset(
         "W006",  # imports a platform-specific module
         "W007",  # input_variable declared but never read
         "W008",  # hardcoded user/machine-specific path
+        "W009",  # processor missing from the recipe schema Processor enum
+        "W010",  # input/output variable key is not snake_case
     ]
 )
+
+# The opinionated recipe schema whose `Processor` enum should list every shared
+# processor (W009). Path is relative to the repo root (pre-commit's cwd).
+SCHEMA_PATH = ".AutoPkgRecipeOpinionated.schema.json"
+SCHEMA_ENUM_MARKER = "schema-enum-ok"  # per-file opt-out for W009
 
 # Env keys a processor may read without declaring them in input_variables:
 # AutoPkg core variables plus the ubiquitous URLDownloader download-chain keys
@@ -968,6 +1020,31 @@ def check_class_naming(proc, stem, info):
     return issues
 
 
+def check_class_name_camelcase(proc, source_lines):
+    """E032: the processor class name must be strict CamelCase.
+
+    Each word is a single leading capital followed by lowercase/digits; runs of
+    capitals (acronyms) are rejected UNLESS the acronym is in ALLOWED_ACRONYMS
+    (kept to AutoPkg's built-in URL/CURL). Any other acronym (JSON, BES, PE, ...)
+    is a per-processor exception: put `# processor-name-ok` on (or just above) the
+    class line to opt out.
+    """
+    if CAMEL_CASE_RE.fullmatch(proc.name):
+        return []
+    if line_has_marker(source_lines, proc.lineno, PROCESSOR_NAME_MARKER):
+        return []
+    allowed = ", ".join(sorted(ALLOWED_ACRONYMS))
+    return [
+        (
+            proc.lineno,
+            "E032",
+            f"class `{proc.name}` should be strict CamelCase (one capital per "
+            f"word; capital runs only for allowed acronyms: {allowed}); rename it, "
+            f"or add `# {PROCESSOR_NAME_MARKER}` if the name is intentional",
+        )
+    ]
+
+
 def check_base_class(proc, info):
     """E004: the class must subclass a recognized AutoPkg Processor base."""
     recognized = KNOWN_BASES | info.imports
@@ -1014,6 +1091,64 @@ def check_class_docstring_sufficient(proc):
             )
         ]
     return []
+
+
+_DOCSTRING_INDEX = None
+
+
+def class_docstring_index(root="."):
+    """Map each normalized processor class docstring to the files that use it.
+
+    Built once per run (memoized) by scanning every processor file under `root`,
+    so the cross-file duplicate check (W011) works even when pre-commit passes
+    only the changed files. Whitespace is collapsed so docstrings differing only
+    in wrapping still count as identical.
+    """
+    global _DOCSTRING_INDEX
+    if _DOCSTRING_INDEX is None:
+        index = collections.defaultdict(list)
+        for path in discover_processor_files(root):
+            try:
+                with open(path, encoding="utf-8", errors="replace") as handle:
+                    tree = ast.parse(handle.read())
+            except (OSError, SyntaxError):
+                continue
+            stem = os.path.splitext(os.path.basename(path))[0]
+            proc = pick_processor_class(scan_module(tree), stem)
+            doc = ast.get_docstring(proc) if proc is not None else None
+            if doc and doc.strip():
+                index[" ".join(doc.split())].append(os.path.normpath(path))
+        _DOCSTRING_INDEX = dict(index)
+    return _DOCSTRING_INDEX
+
+
+def check_duplicate_class_docstring(proc, path):
+    """E033: a processor's class docstring must be unique across the repo.
+
+    The class docstring is the processor's description (via `description =
+    __doc__`), so a docstring shared verbatim by another processor is a
+    copy-paste that no longer fits one of them. Cross-file; reports the OTHER
+    processor file(s) with the same docstring.
+    """
+    doc = ast.get_docstring(proc)
+    if not doc or not doc.strip():
+        return []
+    key = " ".join(doc.split())
+    others = [
+        p for p in class_docstring_index().get(key, []) if p != os.path.normpath(path)
+    ]
+    if not others:
+        return []
+    shown = ", ".join(sorted(others))
+    return [
+        (
+            proc.lineno,
+            "E033",
+            f"class docstring is identical to: {shown}; each processor's docstring "
+            f"is its description and should be distinct -- add "
+            f"`# {DUPLICATE_DOCSTRING_MARKER}` if intentional",
+        )
+    ]
 
 
 def check_description(proc, attrs):
@@ -1098,6 +1233,45 @@ def check_output_variable_entries(attrs):
                     spec.lineno,
                     "E022",
                     f"output_variable `{var_name}` missing `description`",
+                )
+            )
+    return issues
+
+
+def check_variable_name_style(attrs, source_lines):
+    """W010: input_variable / output_variable keys should be snake_case.
+
+    A warning (not an error): the repo has intentional exceptions -- keys that
+    mirror external field names (PE/MSI metadata like `file_peinfo_ProductName`,
+    the `User_Agent` header) and the AutoPkg ALL_CAPS config convention
+    (`COMPUTE_HASHES`). Those opt out with a `# variable-name-ok` comment on (or
+    just above) the key's line. Reported at the key's own line.
+    """
+    issues = []
+    for attr_name, label in (
+        ("input_variables", "input_variable"),
+        ("output_variables", "output_variable"),
+    ):
+        node = attrs.get(attr_name)
+        if not isinstance(node, ast.Dict):
+            continue
+        for key_node in node.keys:
+            if not (
+                isinstance(key_node, ast.Constant) and isinstance(key_node.value, str)
+            ):
+                continue
+            key = key_node.value
+            if SNAKE_CASE_RE.match(key):
+                continue
+            lineno = getattr(key_node, "lineno", node.lineno)
+            if line_has_marker(source_lines, lineno, VARIABLE_NAME_MARKER):
+                continue
+            issues.append(
+                (
+                    lineno,
+                    "W010",
+                    f"{label} `{key}` is not snake_case; rename it or add "
+                    f"`# {VARIABLE_NAME_MARKER}`",
                 )
             )
     return issues
@@ -1306,38 +1480,52 @@ def check_outputs_declared(proc, attrs, source_lines):
     return issues
 
 
+def sibling_test_dirs(path):
+    """Return sibling folders of the processor whose name contains "test".
+
+    These are the sibling directories (case-insensitive "test" in the name, e.g.
+    Test-Recipes/) that hold this repo's test recipes. Shared by the W005 check
+    and its auto-fix so both agree on where test recipes live.
+    """
+    proc_dir = os.path.dirname(path)
+    repo_root = os.path.dirname(proc_dir)
+    dirs = []
+    try:
+        for entry in sorted(os.listdir(repo_root or ".")):
+            full = os.path.join(repo_root, entry)
+            if full != proc_dir and "test" in entry.lower() and os.path.isdir(full):
+                dirs.append(full)
+    except OSError:
+        pass
+    return dirs
+
+
+def is_test_recipe_name(name, stem):
+    """True if `name` is a test recipe for `stem`.
+
+    Matches `<stem>.test.recipe.yaml` and `<stem>-*.test.recipe.yaml` variants
+    (e.g. `<stem>-Win.test.recipe.yaml`).
+    """
+    suffix = ".test.recipe.yaml"
+    return name == stem + suffix or (
+        name.startswith(stem + "-") and name.endswith(suffix)
+    )
+
+
 def check_test_recipe(path, stem):
     """W005: a processor should have at least one test recipe.
 
     Looks for `<stem>.test.recipe.yaml` (or a `<stem>-*.test.recipe.yaml` variant,
     e.g. `<stem>-Win.test.recipe.yaml`) in the processor's own folder or in any
     sibling folder whose name contains "test" (case-insensitive), e.g.
-    Test-Recipes/. Report-only.
+    Test-Recipes/. Auto-fixed by maybe_fix_test_recipe (which writes a stub into a
+    sibling test folder when one exists); reported here otherwise.
     """
-    suffix = ".test.recipe.yaml"
-    prefix = stem + "-"
-
-    def is_test_recipe(name):
-        return name == stem + suffix or (
-            name.startswith(prefix) and name.endswith(suffix)
-        )
-
     proc_dir = os.path.dirname(path)
-    repo_root = os.path.dirname(proc_dir)
-
-    # search the processor's own folder, plus sibling "*test*" folders
-    search_dirs = [proc_dir or "."]
-    try:
-        for entry in os.listdir(repo_root or "."):
-            full = os.path.join(repo_root, entry)
-            if full != proc_dir and "test" in entry.lower() and os.path.isdir(full):
-                search_dirs.append(full)
-    except OSError:
-        pass
-
+    search_dirs = [proc_dir or "."] + sibling_test_dirs(path)
     for directory in search_dirs:
         try:
-            if any(is_test_recipe(name) for name in os.listdir(directory)):
+            if any(is_test_recipe_name(name, stem) for name in os.listdir(directory)):
                 return []
         except OSError:
             continue
@@ -1794,6 +1982,163 @@ def maybe_fix_main_guard(path, proc, info):
     return []
 
 
+def test_recipe_stub_text(stem, processor_ref):
+    """Return the YAML for a minimal test recipe that calls the processor."""
+    return (
+        "---\n"
+        f"Description: Test {stem} Processor\n"
+        f"Identifier: {RECIPE_IDENTIFIER_PREFIX}test.{stem}\n"
+        "Input:\n"
+        f"  NAME: {stem}Test\n"
+        f'MinimumVersion: "{TEST_RECIPE_MIN_VERSION}"\n'
+        "Process:\n"
+        f"  - Processor: {processor_ref}\n"
+    )
+
+
+def maybe_fix_test_recipe(path, stem):
+    """Auto-fix W005: create a stub test recipe in a sibling *test* folder.
+
+    Acts only when the processor has no test recipe yet AND a sibling folder whose
+    name contains "test" (e.g. Test-Recipes/, preferred when present) exists to
+    hold it -- with no such folder there is nowhere to put it, so W005 stays
+    reported. Writes `<stem>.test.recipe.yaml` calling the processor via
+    `com.github.jgstew.<Folder>/<stem>`, so the next run finds it and W005 no
+    longer fires. Never overwrites an existing file. Returns the list of fixed
+    entries (empty if not applicable).
+    """
+    if not check_test_recipe(path, stem):
+        return []  # a test recipe already exists
+
+    test_dirs = sibling_test_dirs(path)
+    if not test_dirs:
+        return []  # no Test-Recipes/-style folder to create it in
+    target_dir = next(
+        (d for d in test_dirs if os.path.basename(d) == "Test-Recipes"), test_dirs[0]
+    )
+
+    recipe_path = os.path.join(target_dir, f"{stem}.test.recipe.yaml")
+    if os.path.exists(recipe_path):
+        return []  # do not overwrite
+
+    # the processor is referenced as com.github.jgstew.<parent folder>/<Name>
+    parent_folder = os.path.basename(os.path.dirname(os.path.abspath(path)))
+    processor_ref = f"{RECIPE_IDENTIFIER_PREFIX}{parent_folder}/{stem}"
+    with open(recipe_path, "w", encoding="utf-8") as handle:
+        handle.write(test_recipe_stub_text(stem, processor_ref))
+
+    return [
+        (
+            1,
+            "W005",
+            f"created stub test recipe {os.path.relpath(recipe_path)} "
+            f"calling {stem} (fill in real Input/Process assertions)",
+        )
+    ]
+
+
+def processor_ref_for(path, stem):
+    """Return the `com.github.jgstew.<parent folder>/<stem>` reference for a file."""
+    parent_folder = os.path.basename(os.path.dirname(os.path.abspath(path)))
+    return f"{RECIPE_IDENTIFIER_PREFIX}{parent_folder}/{stem}"
+
+
+def schema_enum_values():
+    """Return the set of Processor `enum` values in the recipe schema, or None.
+
+    Reads SCHEMA_PATH and unions every `enum` list under
+    `definitions.Process.properties.Processor.anyOf`. Returns None when the schema
+    is missing or unparsable (W009 then does not fire).
+    """
+    try:
+        with open(SCHEMA_PATH, encoding="utf-8") as handle:
+            schema = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    try:
+        blocks = schema["definitions"]["Process"]["properties"]["Processor"]["anyOf"]
+    except (KeyError, TypeError):
+        return None
+    values = set()
+    for block in blocks:
+        if isinstance(block, dict) and isinstance(block.get("enum"), list):
+            values.update(v for v in block["enum"] if isinstance(v, str))
+    return values
+
+
+def check_schema_enum(path, stem, src):
+    """W009: this processor should be listed in the recipe schema Processor enum.
+
+    Keeps the schema's autocomplete/canonical processor list from drifting as
+    processors are added or renamed. Skipped when the schema is absent/unparsable
+    or the file carries the `# schema-enum-ok` marker. Not something macadmin or
+    the schema itself can check (the schema's fallback pattern accepts anything).
+    """
+    if SCHEMA_ENUM_MARKER in src:
+        return []
+    values = schema_enum_values()
+    if values is None:
+        return []
+    ref = processor_ref_for(path, stem)
+    if ref in values:
+        return []
+    return [
+        (
+            1,
+            "W009",
+            f"processor `{ref}` is not listed in {SCHEMA_PATH}'s Processor enum; "
+            f"add it (or `# {SCHEMA_ENUM_MARKER}` if intentionally excluded)",
+        )
+    ]
+
+
+def maybe_fix_schema_enum(path, stem):
+    """Auto-fix W009: append this processor's reference to the schema enum block.
+
+    Appends to the existing `com.github.jgstew.*` enum block (fixing up the
+    trailing comma), leaving every other entry untouched -- a minimal, no-reorder
+    edit. Acts only when the schema is present, the ref is absent, and the jgstew
+    enum entries form a contiguous run (as they do in this schema). Returns the
+    list of fixed entries (empty if not applicable).
+    """
+    values = schema_enum_values()
+    if values is None:
+        return []
+    ref = processor_ref_for(path, stem)
+    if ref in values:
+        return []
+
+    with open(SCHEMA_PATH, encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+
+    # find the contiguous run of `"com.github.jgstew...."` enum entry lines
+    entry_re = re.compile(
+        r'^(\s*)"(' + re.escape(RECIPE_IDENTIFIER_PREFIX) + r'[^"]+)"(,?)\s*$'
+    )
+    hits = [(i, m) for i, line in enumerate(lines) for m in [entry_re.match(line)] if m]
+    if not hits:
+        return []
+    indices = [i for i, _ in hits]
+    if indices != list(range(indices[0], indices[-1] + 1)):
+        return []  # not contiguous -> leave for a human
+
+    indent = hits[0][1].group(1)
+    last_idx = indices[-1]
+    # ensure the previously-last entry ends with a comma, then append the new one
+    lines[last_idx] = f'{indent}"{hits[-1][1].group(2)}",'
+    lines.insert(last_idx + 1, f'{indent}"{ref}"')
+
+    with open(SCHEMA_PATH, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+    return [
+        (
+            1,
+            "W009",
+            f"added `{ref}` to {SCHEMA_PATH}'s Processor enum",
+        )
+    ]
+
+
 def check_file(path, auto_fix=True, disabled=frozenset()):
     """Check one file.
 
@@ -1920,9 +2265,20 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
     issues += check_all_defined(tree, info)  # E026
     issues += check_processor_error_import(info)  # E005
     issues += check_autopkglib_import(tree)  # E031
+    # W005: create a stub test recipe in a sibling *test* folder when missing.
+    # The fix writes a separate .yaml (not this .py), so no re-parse is needed;
+    # the check right after then finds it and does not re-report.
+    if auto_fix and "W005" not in disabled:
+        fixed += maybe_fix_test_recipe(path, stem)
     issues += check_test_recipe(path, stem)  # W005
     issues += check_platform_imports(tree, source_lines)  # W006
     issues += check_hardcoded_paths(tree, source_lines)  # W008
+    # W009: keep the recipe schema's Processor enum in sync. Like W005, the fix
+    # edits a separate file (the schema .json), so no .py re-parse is needed; the
+    # check right after then finds the entry and does not re-report.
+    if auto_fix and "W009" not in disabled:
+        fixed += maybe_fix_schema_enum(path, stem)
+    issues += check_schema_enum(path, stem, src)  # W009
 
     proc = pick_processor_class(info, stem)
     if proc is None:
@@ -1964,13 +2320,17 @@ def check_file(path, auto_fix=True, disabled=frozenset()):
     # --- class-level checks ---
     attrs, main_func = class_members(proc)
     issues += check_class_naming(proc, stem, info)  # E010 / E011
+    issues += check_class_name_camelcase(proc, source_lines)  # E032
     issues += check_base_class(proc, info)  # E004
     issues += check_class_docstring(proc)  # E012
     issues += check_class_docstring_sufficient(proc)  # E024
+    if "E033" not in disabled and DUPLICATE_DOCSTRING_MARKER not in src:
+        issues += check_duplicate_class_docstring(proc, path)  # E033
     issues += check_description(proc, attrs)  # E013
     issues += check_variable_attrs(proc, attrs)  # E014-E017
     issues += check_input_variable_entries(attrs)  # E020 / E021
     issues += check_output_variable_entries(attrs)  # E022
+    issues += check_variable_name_style(attrs, source_lines)  # W010
     issues += check_main_method(proc, main_func)  # E018 / E019
     issues += check_redundant_doc_assign(proc)  # E023
     issues += check_main_guard(proc, info)  # E006 / E007 / W003

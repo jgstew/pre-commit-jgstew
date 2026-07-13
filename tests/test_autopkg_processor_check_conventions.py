@@ -12,6 +12,7 @@ test writes into an explicitly named subfolder (e.g. "plainpkg" vs
 """
 
 import ast
+import json
 
 import pytest
 
@@ -62,6 +63,78 @@ if __name__ == "__main__":
     PROCESSOR = ExampleClean()
     PROCESSOR.execute_shell()
 '''
+
+
+# A docstring long enough to clear E024 (>= MIN_CLASS_DOCSTRING_LEN) and not the
+# generated "<Class> processor." stub, so name/variable checks are tested in
+# isolation without E024 noise.
+DOC = (
+    "A deliberately simple processor used to exercise the convention checker "
+    "across its various rules."
+)
+
+
+def processor_src(name, doc=DOC, above_class="", input_body=None):
+    """Return the source of an otherwise E-clean processor class named `name`.
+
+    `above_class` is inserted immediately before the `class` line (for the
+    per-line E032/E033 opt-out markers). `input_body` (raw lines) fills
+    input_variables so W010 can be exercised; None means an empty dict.
+    """
+    input_block = "{}" if input_body is None else "{\n" + input_body + "    }"
+    return (
+        "#!/usr/local/autopkg/python\n"
+        "# Created 2024 by JGStew\n"
+        f'"""See docstring for {name} class"""\n'
+        "\n"
+        "from autopkglib import Processor, ProcessorError\n"
+        "\n"
+        f'__all__ = ["{name}"]\n'
+        "\n"
+        "\n"
+        f"{above_class}"
+        f"class {name}(Processor):\n"
+        f'    """{doc}"""\n'
+        "\n"
+        "    description = __doc__\n"
+        f"    input_variables = {input_block}\n"
+        "    output_variables = {}\n"
+        "\n"
+        "    def main(self):\n"
+        '        """Execution starts here."""\n'
+        "        _ = ProcessorError\n"
+        "\n"
+        "\n"
+        'if __name__ == "__main__":\n'
+        f"    PROCESSOR = {name}()\n"
+        "    PROCESSOR.execute_shell()\n"
+    )
+
+
+# A minimal recipe schema with a jgstew Processor enum block, for W009 tests.
+SCHEMA_JSON = """{
+  "definitions": {
+    "Process": {
+      "properties": {
+        "Processor": {
+          "anyOf": [
+            {
+              "enum": [
+                "URLDownloader"
+              ]
+            },
+            {
+              "enum": [
+                "com.github.jgstew.SharedProcessors/Existing"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+"""
 
 
 def write(folder, name, content):
@@ -350,3 +423,212 @@ def test_main_returns_one_when_issue_remains(tmp_path):
 def test_main_returns_one_after_autofix(tmp_path):
     path = write(tmp_path / "SharedProcessors", "FixMe.py", "")
     assert checker.main(["--auto-fix=yes", path]) == 1
+
+
+# --------------------------------------------------------------------------- #
+# E032: class name must be strict CamelCase (allowed acronyms: URL, CURL)
+# --------------------------------------------------------------------------- #
+def test_e032_lowercase_start_flagged(tmp_path):
+    path = write(tmp_path / "SharedProcessors", "fooBar.py", processor_src("fooBar"))
+    issues, _fixed = checker.check_file(path, auto_fix=False)
+    assert "E032" in codes(issues)
+
+
+def test_e032_allowed_acronym_url_passes(tmp_path):
+    path = write(
+        tmp_path / "SharedProcessors", "URLThing.py", processor_src("URLThing")
+    )
+    issues, _fixed = checker.check_file(path, auto_fix=False)
+    assert "E032" not in codes(issues)
+
+
+def test_e032_camelcase_word_passes(tmp_path):
+    # "Json" is an ordinary CamelCase word (not an acronym run) -> allowed
+    path = write(
+        tmp_path / "SharedProcessors", "JsonThing.py", processor_src("JsonThing")
+    )
+    issues, _fixed = checker.check_file(path, auto_fix=False)
+    assert "E032" not in codes(issues)
+
+
+def test_e032_non_allowed_acronym_flagged(tmp_path):
+    path = write(
+        tmp_path / "SharedProcessors", "JSONThing.py", processor_src("JSONThing")
+    )
+    issues, _fixed = checker.check_file(path, auto_fix=False)
+    assert "E032" in codes(issues)
+
+
+def test_e032_marker_suppresses(tmp_path):
+    src = processor_src("JSONMarked", above_class="# processor-name-ok\n")
+    path = write(tmp_path / "SharedProcessors", "JSONMarked.py", src)
+    issues, _fixed = checker.check_file(path, auto_fix=False)
+    assert "E032" not in codes(issues)
+
+
+# --------------------------------------------------------------------------- #
+# W010: input/output variable keys must be snake_case
+# --------------------------------------------------------------------------- #
+def test_w010_camelcase_key_flagged(tmp_path):
+    body = '        "badKey": {"required": False, "description": "x"},\n'
+    path = write(
+        tmp_path / "SharedProcessors",
+        "BadKey.py",
+        processor_src("BadKey", input_body=body),
+    )
+    issues, _fixed = checker.check_file(path, auto_fix=False)
+    assert "W010" in codes(issues)
+
+
+def test_w010_all_caps_key_flagged(tmp_path):
+    # strict: ALL_CAPS keys are flagged too (must be marked if intentional)
+    body = '        "COMPUTE_HASHES": {"required": False, "description": "x"},\n'
+    path = write(
+        tmp_path / "SharedProcessors",
+        "CapsKey.py",
+        processor_src("CapsKey", input_body=body),
+    )
+    issues, _fixed = checker.check_file(path, auto_fix=False)
+    assert "W010" in codes(issues)
+
+
+def test_w010_snake_key_ok(tmp_path):
+    body = '        "good_key": {"required": False, "description": "x"},\n'
+    path = write(
+        tmp_path / "SharedProcessors",
+        "GoodKey.py",
+        processor_src("GoodKey", input_body=body),
+    )
+    issues, _fixed = checker.check_file(path, auto_fix=False)
+    assert "W010" not in codes(issues)
+
+
+def test_w010_marker_suppresses(tmp_path):
+    body = (
+        "        # variable-name-ok\n"
+        '        "badKey": {"required": False, "description": "x"},\n'
+    )
+    path = write(
+        tmp_path / "SharedProcessors",
+        "MarkedKey.py",
+        processor_src("MarkedKey", input_body=body),
+    )
+    issues, _fixed = checker.check_file(path, auto_fix=False)
+    assert "W010" not in codes(issues)
+
+
+# --------------------------------------------------------------------------- #
+# E033: class docstring must be unique across the repo (cross-file)
+# --------------------------------------------------------------------------- #
+E033_DOC = (
+    "Reads a value from the environment and copies it straight to the output var."
+)
+
+
+def test_e033_duplicate_docstring_flagged(tmp_path, monkeypatch):
+    write(
+        tmp_path / "SharedProcessors", "Alpha.py", processor_src("Alpha", doc=E033_DOC)
+    )
+    write(tmp_path / "SharedProcessors", "Beta.py", processor_src("Beta", doc=E033_DOC))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(checker, "_DOCSTRING_INDEX", None)
+    issues, _fixed = checker.check_file("SharedProcessors/Beta.py", auto_fix=False)
+    assert "E033" in codes(issues)
+
+
+def test_e033_distinct_docstrings_pass(tmp_path, monkeypatch):
+    write(
+        tmp_path / "SharedProcessors",
+        "Gamma.py",
+        processor_src(
+            "Gamma",
+            doc="Gamma does one clearly documented and distinct thing worth noting.",
+        ),
+    )
+    write(
+        tmp_path / "SharedProcessors",
+        "Delta.py",
+        processor_src(
+            "Delta",
+            doc="Delta does a different clearly documented distinct thing entirely.",
+        ),
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(checker, "_DOCSTRING_INDEX", None)
+    issues, _fixed = checker.check_file("SharedProcessors/Delta.py", auto_fix=False)
+    assert "E033" not in codes(issues)
+
+
+def test_e033_marker_suppresses(tmp_path, monkeypatch):
+    write(
+        tmp_path / "SharedProcessors", "Alpha.py", processor_src("Alpha", doc=E033_DOC)
+    )
+    write(
+        tmp_path / "SharedProcessors",
+        "Beta.py",
+        processor_src("Beta", doc=E033_DOC, above_class="# duplicate-docstring-ok\n"),
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(checker, "_DOCSTRING_INDEX", None)
+    issues, _fixed = checker.check_file("SharedProcessors/Beta.py", auto_fix=False)
+    assert "E033" not in codes(issues)
+
+
+def test_e033_errors_via_main(tmp_path, monkeypatch):
+    # E033 is an error, so a duplicate must make the run exit non-zero.
+    write(
+        tmp_path / "SharedProcessors", "Alpha.py", processor_src("Alpha", doc=E033_DOC)
+    )
+    write(tmp_path / "SharedProcessors", "Beta.py", processor_src("Beta", doc=E033_DOC))
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(checker, "_DOCSTRING_INDEX", None)
+    assert checker.main(["--auto-fix=no"]) == 1
+
+
+# --------------------------------------------------------------------------- #
+# W009: processor should be listed in the recipe schema's Processor enum
+# --------------------------------------------------------------------------- #
+def test_w009_reports_when_missing(tmp_path, monkeypatch):
+    write(tmp_path, ".AutoPkgRecipeOpinionated.schema.json", SCHEMA_JSON)
+    write(tmp_path / "SharedProcessors", "NewProc.py", processor_src("NewProc"))
+    monkeypatch.chdir(tmp_path)
+    issues, _fixed = checker.check_file("SharedProcessors/NewProc.py", auto_fix=False)
+    assert "W009" in codes(issues)
+
+
+def test_w009_present_no_report(tmp_path, monkeypatch):
+    write(tmp_path, ".AutoPkgRecipeOpinionated.schema.json", SCHEMA_JSON)
+    write(tmp_path / "SharedProcessors", "Existing.py", processor_src("Existing"))
+    monkeypatch.chdir(tmp_path)
+    issues, _fixed = checker.check_file("SharedProcessors/Existing.py", auto_fix=False)
+    assert "W009" not in codes(issues)
+
+
+def test_w009_no_schema_no_report(tmp_path, monkeypatch):
+    write(tmp_path / "SharedProcessors", "NewProc.py", processor_src("NewProc"))
+    monkeypatch.chdir(tmp_path)  # no schema file present -> check is a no-op
+    issues, _fixed = checker.check_file("SharedProcessors/NewProc.py", auto_fix=False)
+    assert "W009" not in codes(issues)
+
+
+def test_w009_marker_suppresses(tmp_path, monkeypatch):
+    write(tmp_path, ".AutoPkgRecipeOpinionated.schema.json", SCHEMA_JSON)
+    src = processor_src("NewProc", above_class="# schema-enum-ok\n")
+    write(tmp_path / "SharedProcessors", "NewProc.py", src)
+    monkeypatch.chdir(tmp_path)
+    issues, _fixed = checker.check_file("SharedProcessors/NewProc.py", auto_fix=False)
+    assert "W009" not in codes(issues)
+
+
+def test_w009_autofix_appends_to_schema(tmp_path, monkeypatch):
+    schema = tmp_path / ".AutoPkgRecipeOpinionated.schema.json"
+    schema.write_text(SCHEMA_JSON, encoding="utf-8")
+    write(tmp_path / "SharedProcessors", "NewProc.py", processor_src("NewProc"))
+    monkeypatch.chdir(tmp_path)
+    _issues, fixed = checker.check_file("SharedProcessors/NewProc.py", auto_fix=True)
+    assert "W009" in codes(fixed)
+    data = json.loads(schema.read_text(encoding="utf-8"))
+    values = set()
+    for block in data["definitions"]["Process"]["properties"]["Processor"]["anyOf"]:
+        values.update(block.get("enum", []))
+    assert "com.github.jgstew.SharedProcessors/NewProc" in values
