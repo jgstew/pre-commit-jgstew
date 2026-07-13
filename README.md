@@ -17,12 +17,32 @@ For any hook in this repo you wish to use, add the following to your pre-commit 
 ---
 repos:
   - repo: https://github.com/jgstew/pre-commit-jgstew
-    rev: v1.2.2
+    rev: v1.4.1
     hooks:
       - id: minimum-changes
 ```
 
 After adding a hook to your pre-commit config, it's not a bad idea to run `pre-commit autoupdate` to ensure you have the latest version of the hooks.
+
+## Available hooks
+
+| id                             | description                                                                                                                                                                                                                                                                          |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `minimum-changes`              | Require a minimum number of changed lines against the git diff.                                                                                                                                                                                                                      |
+| `validate-bes`                 | Validate BigFix BES XML files.                                                                                                                                                                                                                                                       |
+| `validate-plist`               | Validate Apple plist files (`.recipe`, `.plist`).                                                                                                                                                                                                                                    |
+| `verify-files-contain-entry`   | Require a file to contain a regex match/group found in a reference file.                                                                                                                                                                                                             |
+| `verify-files-contain-pattern` | Require a file to contain a regex pattern.                                                                                                                                                                                                                                           |
+| `verify-files-are-ascii`       | Require files to contain only ASCII.                                                                                                                                                                                                                                                 |
+| `git-clean`                    | Delete untracked files by running `git clean -f`.                                                                                                                                                                                                                                    |
+| `regex-search-filter-replace`  | Replace file contents based on a regex match and filter.                                                                                                                                                                                                                             |
+| `revert-missing-change`        | Require a regex match in a file's git history (manual stage).                                                                                                                                                                                                                        |
+| `github-action-set-output-fix` | Rewrite GitHub Action lines using the deprecated `set-output` / `save-state`.                                                                                                                                                                                                        |
+| `add-missing-docstrings`       | Insert a boilerplate docstring into named functions when absent (default: `main`).                                                                                                                                                                                                   |
+| `check-processor-conventions`  | Picky, opinionated checks + auto-fixes for AutoPkg processor `.py` files (boilerplate, docstrings, `input`/`output_variables`, `__main__` guard, naming, ...).                                                                                                                       |
+| `check-recipe-conventions`     | Picky, opinionated cross-field checks + auto-fixes for AutoPkg recipe files (YAML or plist): `Identifier`<->`NAME`, `ParentRecipe` resolvability/cycles, duplicate `Identifier`/`Description`, filename<->identifier type, `MinimumVersion` floor, `Process`-step spacing, and more. |
+
+The AutoPkg convention hooks (`check-processor-conventions`, `check-recipe-conventions`) auto-fix the fixable issues in place and exit non-zero so the changes are reviewed and re-staged; `check-recipe-conventions` accepts `args: ["--strict"]` to also fail on remaining warnings.
 
 ## Test commands:
 

@@ -100,3 +100,18 @@
   pass_filenames: True
   entry: check-processor-conventions
   types: [python]
+- id: check-recipe-conventions
+  name: Check AutoPkg recipe conventions
+  description: >
+    Picky, opinionated cross-field checks for AutoPkg recipe files (YAML or
+    plist) that a JSON schema cannot express: Identifier<->Input NAME,
+    ParentRecipe resolvability and cycles, duplicate Identifiers/Descriptions,
+    filename<->identifier type, MinimumVersion floor, Process-step blank-line
+    spacing, http/https, regex validity, and shared-processor references.
+    Auto-fixes the fixable ones in place and exits 1 when anything was fixed;
+    pass --strict to also fail on remaining warnings.
+  language: python
+  pass_filenames: True
+  entry: check-recipe-conventions
+  types: [text]
+  files: \.recipe(\.ya?ml)?$
