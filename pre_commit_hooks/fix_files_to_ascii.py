@@ -14,6 +14,11 @@ Like other auto-fixing hooks it exits non-zero when it changes a file, so the
 change is reviewed and re-staged. Files that cannot be read as UTF-8 text (e.g.
 binaries that slipped past the `types: [text]` filter) are skipped with a note
 and do not fail the hook.
+
+Existing line endings are preserved exactly (CRLF stays CRLF, LF stays LF): the
+file is read and written with newline translation disabled, and only non-ASCII
+content is transliterated -- the `\r` and `\n` bytes are ASCII and pass through
+untouched.
 """
 
 import argparse
@@ -72,7 +77,11 @@ def main(argv=None):
     retval = 0
     for filename in args.filenames:
         try:
-            with open(filename, "r", encoding="utf-8") as f:
+            # newline="" disables universal-newline translation, so existing
+            # CRLF / CR / LF line endings are preserved exactly (anyascii and the
+            # pre-substitution table leave ASCII control chars, including \r and
+            # \n, untouched -- only non-ASCII content is transliterated).
+            with open(filename, "r", encoding="utf-8", newline="") as f:
                 original = f.read()
         except (UnicodeDecodeError, OSError) as err:
             print(f"file: {filename} could not be read as UTF-8 text; skipping ({err})")
@@ -80,7 +89,7 @@ def main(argv=None):
 
         fixed = fix_text(original)
         if fixed != original:
-            with open(filename, "w", encoding="utf-8") as f:
+            with open(filename, "w", encoding="utf-8", newline="") as f:
                 f.write(fixed)
             print(f"file: {filename} transliterated non-ascii chars to ascii")
             retval = 1

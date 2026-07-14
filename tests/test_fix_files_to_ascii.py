@@ -101,3 +101,32 @@ def test_unreadable_binary_is_skipped(tmp_path):
 def test_fix_text_helper():
     assert hook.fix_text("plain") == "plain"
     assert hook.fix_text("\u00e9").isascii()
+
+
+def test_crlf_preserved(tmp_path):
+    path = tmp_path / "crlf.txt"
+    path.write_bytes("caf\u00e9\r\nna\u00efve\r\n".encode("utf-8"))
+    assert hook.main([str(path)]) == 1
+    assert path.read_bytes() == b"cafe\r\nnaive\r\n"
+
+
+def test_lf_preserved(tmp_path):
+    path = tmp_path / "lf.txt"
+    path.write_bytes("caf\u00e9\nna\u00efve\n".encode("utf-8"))
+    assert hook.main([str(path)]) == 1
+    assert path.read_bytes() == b"cafe\nnaive\n"
+
+
+def test_mixed_endings_preserved(tmp_path):
+    # each line's ending is left exactly as-is; only the content is fixed
+    path = tmp_path / "mixed.txt"
+    path.write_bytes("\u00e9\r\n\u00fc\n".encode("utf-8"))
+    assert hook.main([str(path)]) == 1
+    assert path.read_bytes() == b"e\r\nu\n"
+
+
+def test_ascii_crlf_untouched(tmp_path):
+    path = tmp_path / "plain.txt"
+    path.write_bytes(b"a\r\nb\r\n")
+    assert hook.main([str(path)]) == 0
+    assert path.read_bytes() == b"a\r\nb\r\n"
