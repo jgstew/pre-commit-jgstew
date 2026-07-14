@@ -1,0 +1,2544 @@
+#!/usr/bin/env python3
+"""Pre-commit hook: check AutoPkg processors for boilerplate and conventions.
+
+This is intentionally PICKY and OPINIONATED. It flags things that are not
+strictly required by AutoPkg but are the conventions used throughout this repo,
+so every processor looks and behaves consistently.
+
+Usage:
+    check_processor_conventions.py [--auto-fix=yes|no] [--disable E005,E020]
+        [SharedProcessors/Foo.py ...]
+
+With no file arguments, all processor-looking .py files (those importing
+autopkglib) in the current folder and up to 3 subfolders deep are checked;
+non-processor .py files are silently ignored.
+
+--disable takes a comma-separated list of check IDs to skip entirely. A disabled
+fixable check is neither auto-fixed nor reported.
+
+--auto-fix corrects the fixable conventions in place. It defaults to yes when
+files are given explicitly, but to no when auto-discovering (bare invocation), so
+a bare run is read-only unless you pass --auto-fix=yes. Currently
+auto-fixable: E001 (the shebang), E002 (a completely missing module-level
+docstring), E003 (a missing `__all__`, added after the imports as
+`__all__ = ["<Class>"]` -- only when the file has a class), E010 (a file with no
+class at all gets a minimal processor class stub named after the file, which then
+chains E003/E006/etc.), E006/E007 (the `__main__` guard -- added when missing,
+rewritten to
+the canonical `PROCESSOR = <Class>()` / `PROCESSOR.execute_shell()` form when
+not), E012+E013 together (when a class has no docstring but sets
+`description = "<str>"`, the string is promoted to the class docstring and
+`description` is set to `__doc__`), E023 (a redundant `__doc__ = description`
+left over once `description = __doc__` is set), E025 (a missing author/created
+header comment is added after the shebang as `# Created <year> by <author>`,
+using the file's original git author/year, or the current git user/year for a
+new file), E028 (a simple `print(x)` inside a processor method is rewritten to
+`self.output(x, 3)`), and E030 (an undeclared
+env key is added to input_variables with a blank description -- which then trips
+E020 so a human fills it in). Auto-fixed files are rewritten and the hook still
+exits non-zero so the changes can be reviewed and re-staged.
+
+Non-fixable opinionated checks include: E020 (every input_variable needs a
+non-empty `description`), E024 (the class docstring is the processor's primary
+documentation -- a trivial one-liner or generated stub is rejected so it gets
+expanded and maintained), E026 (every name in `__all__` must be defined in the
+file -- need not be a class), E029 (every declared output_variable must be
+set via self.env, unless it is also an input_variable -- declaring an input as an
+output too is a deliberate way to have AutoPkg re-display it in verbose runs), and
+E032 (the class name must be strict CamelCase: one capital per word, with capital
+runs allowed only for the built-in acronyms in ALLOWED_ACRONYMS -- URL, CURL; any
+other acronym, e.g. JSON/BES/PE/OLE/QR, is a per-processor exception marked with
+`# processor-name-ok`), and E033 (a processor's class docstring must be unique
+across the repo -- the docstring is the processor's description, so a verbatim
+duplicate is a copy-paste that no longer fits one of them; cross-file, opt out
+per-file with `# duplicate-docstring-ok`).
+E030 allows AutoPkg built-ins, ALL_CAPS external config/credential keys (e.g.
+BES_PASSWORD), keys the processor writes itself, and get() fallback defaults.
+
+Warnings (do not fail the hook): W003 (the `__main__` guard is not last in the
+file), W004 (writes a `self.env[...]` key not declared in output_variables),
+W005 (no Test-Recipes/<Name>*.test.recipe.yaml for this processor -- auto-fixed
+when a sibling "*test*" folder exists, by writing a stub test recipe that calls
+the processor), W006 (imports a platform-specific module in a cross-platform
+repo), W007 (an input_variable is declared but never read from self.env),
+W008 (a hardcoded user/machine-specific path), and W009 (this processor is not
+listed in the recipe schema's Processor enum -- auto-fixed by appending its
+`com.github.jgstew.<folder>/<Name>` reference to that enum; opt out per-file with
+`# schema-enum-ok`), and W010 (an input/output variable key is not snake_case).
+W004/W006/W007/W008/W010 each accept a per-line opt-out comment
+(`# output-undeclared-ok`, `# platform-specific-ok`, `# input-unread-ok`,
+`# hardcoded-path-ok`, `# variable-name-ok`) for reviewed, intentional
+exceptions.
+
+A `print(...)` call that E028 cannot safely rewrite (multiple args, file=/sep=/
+end= kwargs, or a staticmethod) stays reported for a human to fix.
+
+Only AutoPkg processors are validated. A .py file that does not import
+autopkglib (`import autopkglib` or `from autopkglib import ...`) is not a
+processor, so it is skipped with a non-failing W001 warning rather than flagged
+with conventions that do not apply to it.
+
+Two exceptions are still treated as processors even without that import: a file
+that already defines a class subclassing a known processor base, and a small
+stub (at most STUB_MAX_LINES non-blank lines) that lives in a folder whose name
+contains "processor" (e.g. SharedProcessors). The latter is how a brand-new,
+nearly-empty file is built out: the auto-fixers add the shebang, header,
+docstring, the autopkglib import (E031), a class stub, `__all__`, and the
+`__main__` guard, turning it into a complete processor. Dunder files
+(`__init__.py`) and files carrying the skip marker are never treated this way.
+
+A file can also opt out of all checks explicitly with a top-of-file comment:
+    # pre-commit-skip: processor-conventions
+
+Exit codes:
+    0  all checked files conform (warnings alone do not fail) and nothing fixed
+    1  one or more violations found, or a file was auto-fixed
+"""
+
+import argparse
+import ast
+import collections
+import datetime
+import json
+import os
+import re
+import subprocess
+import sys
+
+SKIP_MARKER = "pre-commit-skip: processor-conventions"
+EXPECTED_SHEBANG = "#!/usr/local/autopkg/python"
+
+# A small .py file inside a folder whose name contains "processor" (case-
+# insensitive, e.g. SharedProcessors) is treated as a not-yet-written processor
+# stub: it is validated (and auto-fixed) rather than skipped as a non-processor,
+# so the auto-fixers can build it out into a real processor. "Small" means at
+# most this many non-blank lines.
+PROCESSOR_FOLDER_HINT = "processor"
+STUB_MAX_LINES = 15
+
+# Inline markers (a trailing comment, or a comment on the line above) that exempt
+# a single line from a warning. Used for intentional, reviewed exceptions.
+OUTPUT_UNDECLARED_MARKER = "output-undeclared-ok"  # W004
+PLATFORM_IMPORT_MARKER = "platform-specific-ok"  # W006
+INPUT_UNREAD_MARKER = "input-unread-ok"  # W007
+HARDCODED_PATH_MARKER = "hardcoded-path-ok"  # W008
+VARIABLE_NAME_MARKER = "variable-name-ok"  # W010
+PROCESSOR_NAME_MARKER = "processor-name-ok"  # E032
+DUPLICATE_DOCSTRING_MARKER = "duplicate-docstring-ok"  # E033 (file-level)
+
+# A snake_case variable-key name: a lowercase letter followed by lowercase
+# letters, digits, and underscores (W010). Keys that mirror an external field
+# (PE/MSI metadata, an HTTP header) or the AutoPkg ALL_CAPS config convention can
+# opt out with `# variable-name-ok`.
+SNAKE_CASE_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+# A processor CLASS NAME must be strict CamelCase (E032): each word is a single
+# capital followed by lowercase/digits, with NO runs of capitals -- EXCEPT these
+# acronyms, kept to the ones AutoPkg's own built-in processors use (URLDownloader,
+# CURLDownloader, ...). Any OTHER acronym (JSON, BES, PE, OLE, QR, ...) is a
+# per-processor exception: mark that processor with `# processor-name-ok` rather
+# than widening this set. (E010 ties the class name to the filename, so this
+# effectively governs the filename too.)
+ALLOWED_ACRONYMS = frozenset(["URL", "CURL"])
+CAMEL_CASE_RE = re.compile(
+    r"^(?:"
+    + "|".join(re.escape(a) for a in sorted(ALLOWED_ACRONYMS))
+    + r"|[A-Z][a-z]+[0-9]*|[A-Z][0-9]+)+$"
+)
+
+# Platform-specific modules a cross-platform processor should not import
+# unconditionally (W006). A genuinely platform-specific processor can opt out
+# with the PLATFORM_IMPORT_MARKER on the import line.
+PLATFORM_SPECIFIC_MODULES = frozenset(
+    [
+        # macOS (pyobjc and friends)
+        "Foundation",
+        "AppKit",
+        "objc",
+        "CoreFoundation",
+        "Cocoa",
+        "Quartz",
+        "PyObjCTools",
+        "ScriptingBridge",
+        "LaunchServices",
+        "SystemConfiguration",
+        # Windows
+        "msilib",
+        "winreg",
+        "_winreg",
+        "winsound",
+        "win32api",
+        "win32com",
+        "win32con",
+        "win32file",
+        "win32gui",
+        "pywintypes",
+    ]
+)
+
+# String literals that pin to a specific user/machine location (W008). These are
+# almost always accidental (a leftover personal path); standard tool locations
+# like /usr/local/bin or /opt/homebrew are intentionally NOT matched.
+HARDCODED_PATH_RE = re.compile(
+    r"""^(
+        /Users/ | /home/ |                 # unix home dirs
+        /private/var/folders/ | /var/folders/ |   # macOS per-user temp
+        [A-Za-z]:[\\/]Users[\\/]            # Windows user profile
+    )""",
+    re.VERBOSE,
+)
+
+# A class docstring is the processor's primary documentation (AutoPkg surfaces it
+# as the processor description), so a trivial one-liner is rejected by E024. This
+# is the minimum stripped length; the shortest real docstring in the repo is ~65
+# characters, so 40 cleanly separates genuine descriptions from stub placeholders.
+MIN_CLASS_DOCSTRING_LEN = 40
+
+# Convention for the stub test recipe the W005 auto-fix generates: it calls the
+# processor via `com.github.jgstew.<Folder>/<Name>` and is written into a sibling
+# folder whose name contains "test" (e.g. Test-Recipes/).
+RECIPE_IDENTIFIER_PREFIX = "com.github.jgstew."
+TEST_RECIPE_MIN_VERSION = "2.4.1"
+
+# Every check ID this tool can emit -- used to validate --disable arguments so a
+# typo (e.g. "E99") is reported rather than silently ignored.
+KNOWN_CODES = frozenset(
+    [
+        "E000",  # syntax error
+        "E001",  # shebang
+        "E002",  # module docstring
+        "E003",  # __all__
+        "E004",  # subclass an AutoPkg base
+        "E005",  # import ProcessorError
+        "E006",  # __main__ guard
+        "E007",  # __main__ calls execute_shell()
+        "E010",  # class name matches filename / no class found
+        "E011",  # class listed in __all__
+        "E012",  # class docstring
+        "E013",  # description = __doc__
+        "E014",  # input_variables defined
+        "E015",  # input_variables is a dict literal
+        "E016",  # output_variables defined
+        "E017",  # output_variables is a dict literal
+        "E018",  # main() defined
+        "E019",  # main() docstring
+        "E020",  # input_variable description
+        "E021",  # input_variable required
+        "E022",  # output_variable description
+        "E023",  # redundant __doc__ = description
+        "E024",  # class docstring too brief (insufficient documentation)
+        "E025",  # missing author/created header comment after the shebang
+        "E026",  # __all__ lists a name not defined in this file
+        "E028",  # print() used instead of self.output()
+        "E029",  # output_variable declared but never set
+        "E030",  # reads an undeclared env key
+        "E031",  # missing an autopkglib import (added when building out a stub)
+        "E032",  # class name is not strict CamelCase (allowed acronyms excepted)
+        "E033",  # class docstring is identical to another processor's
+        "W001",  # not an AutoPkg processor
+        "W002",  # file not found
+        "W003",  # __main__ guard not at end of file
+        "W004",  # writes an env key not declared in output_variables
+        "W005",  # no test recipe for this processor
+        "W006",  # imports a platform-specific module
+        "W007",  # input_variable declared but never read
+        "W008",  # hardcoded user/machine-specific path
+        "W009",  # processor missing from the recipe schema Processor enum
+        "W010",  # input/output variable key is not snake_case
+    ]
+)
+
+# The opinionated recipe schema whose `Processor` enum should list every shared
+# processor (W009). Path is relative to the repo root (pre-commit's cwd).
+SCHEMA_PATH = ".AutoPkgRecipeOpinionated.schema.json"
+SCHEMA_ENUM_MARKER = "schema-enum-ok"  # per-file opt-out for W009
+
+# Env keys a processor may read without declaring them in input_variables:
+# AutoPkg core variables plus the ubiquitous URLDownloader download-chain keys
+# that flow between processors. Reads of anything else should be declared.
+AUTOPKG_BUILTINS = frozenset(
+    [
+        "RECIPE_DIR",
+        "RECIPE_CACHE_DIR",
+        "RECIPE_PATH",
+        "PARENT_RECIPE",
+        "PARENT_RECIPES",
+        "RECIPE_OVERRIDE_DIRS",
+        "RECIPE_SEARCH_DIRS",
+        "AUTOPKG_VERSION",
+        "CACHE_DIR",
+        "verbose",
+        "NAME",
+        "version",
+        "pathname",
+        "PKG",
+        "pkg_path",
+        "dmg_path",
+        "url",
+        "download_changed",
+        "last_modified",
+        "etag",
+        "download_info",
+        "stop_processing_recipe",
+        "MUNKI_REPO",
+        "munki_repo",
+        "pkg_repo_dir",
+    ]
+)
+
+# Recognized AutoPkg base classes a processor may subclass (besides anything
+# imported directly from autopkglib*, and the repo-local SharedUtilityMethods).
+KNOWN_BASES = {
+    "Processor",
+    "URLGetter",
+    "URLDownloader",
+    "URLTextSearcher",
+    "DmgMounter",
+    "Copier",
+    "Unarchiver",
+    # repo-local base processors other processors subclass:
+    "SharedUtilityMethods",
+    "BESImport",
+}
+
+
+def base_names(classnode):
+    """Return the names of a class's base classes (Name or Attribute bases)."""
+    names = []
+    for base in classnode.bases:
+        if isinstance(base, ast.Name):
+            names.append(base.id)
+        elif isinstance(base, ast.Attribute):
+            names.append(base.attr)
+    return names
+
+
+def has_fstring_docstring(node):
+    """True if the node's first statement is an f-string.
+
+    An f-string is NOT a valid docstring: Python leaves __doc__ as None, which
+    silently breaks the `description = __doc__` convention.
+    """
+    body = getattr(node, "body", None)
+    return bool(
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.JoinedStr)
+    )
+
+
+def docstring_issue(node, lineno, check_id, what):
+    """Return a docstring violation tuple, distinguishing f-string from missing."""
+    if has_fstring_docstring(node):
+        return (
+            lineno,
+            check_id,
+            f"{what} docstring must be a plain string, not an f-string",
+        )
+    return (lineno, check_id, f"missing {what} docstring")
+
+
+def dict_entries(node):
+    """Yield (key_name, value_node) for string-keyed entries of an ast.Dict."""
+    if not isinstance(node, ast.Dict):
+        return
+    for key, value in zip(node.keys, node.values):
+        if isinstance(key, ast.Constant) and isinstance(key.value, str):
+            yield key.value, value
+
+
+def dict_has_key(node, name):
+    """True if ast.Dict literal has a string key `name`."""
+    return any(k == name for k, _ in dict_entries(node))
+
+
+def dict_get_value(node, name):
+    """Return the value node for string key `name` in an ast.Dict, or None."""
+    for key, value in dict_entries(node):
+        if key == name:
+            return value
+    return None
+
+
+def is_blank_string(node):
+    """True if `node` is a string constant that is empty or only whitespace."""
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and not node.value.strip()
+    )
+
+
+def line_has_marker(source_lines, lineno, marker):
+    """True if `marker` appears on the given 1-based line or the line directly above."""
+    context = source_lines[max(0, lineno - 2) : lineno]
+    return any(marker in line for line in context)
+
+
+def module_defined_names(body, names=None):
+    """Collect names defined at module scope (recursing into top-level if/try).
+
+    Includes classes, functions, simple assignment targets, and imported names,
+    but not names bound only inside functions/classes. Used by E026 to verify
+    every `__all__` entry is actually defined in the file (need not be a class).
+    """
+    if names is None:
+        names = set()
+    for node in body:
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names.add(target.id)
+                elif isinstance(target, (ast.Tuple, ast.List)):
+                    names.update(e.id for e in target.elts if isinstance(e, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            names.add(node.target.id)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add((alias.asname or alias.name).split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.If):
+            module_defined_names(node.body, names)
+            module_defined_names(node.orelse, names)
+        elif isinstance(node, ast.Try):
+            module_defined_names(node.body, names)
+            for handler in node.handlers:
+                module_defined_names(handler.body, names)
+            module_defined_names(node.orelse, names)
+            module_defined_names(node.finalbody, names)
+    return names
+
+
+def env_read_info(proc):
+    """Return (read_keys, has_dynamic_read) for every self.env read in the class.
+
+    read_keys is the set of constant string keys read via subscript-load or
+    `self.env.get(...)`, INCLUDING get() fallback defaults (a declared input may
+    legitimately be consumed only as a fallback). has_dynamic_read is True if any
+    read uses a non-constant key, so callers can suppress unprovable warnings.
+    """
+    keys = set()
+    dynamic = False
+    for node in ast.walk(proc):
+        if (
+            isinstance(node, ast.Subscript)
+            and _is_self_env(node.value)
+            and isinstance(node.ctx, ast.Load)
+        ):
+            if isinstance(node.slice, ast.Constant) and isinstance(
+                node.slice.value, str
+            ):
+                keys.add(node.slice.value)
+            else:
+                dynamic = True
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and _is_self_env(node.func.value)
+        ):
+            if (
+                node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                keys.add(node.args[0].value)
+            elif node.args:
+                dynamic = True
+    return keys, dynamic
+
+
+def apply_shebang_fix(path):
+    """Rewrite the file's first line to the expected shebang.
+
+    Replaces an existing `#!...` line, or prepends one if the file has none;
+    everything after the first line is preserved unchanged.
+    """
+    with open(path, encoding="utf-8") as handle:
+        content = handle.read()
+    if content.startswith("#!"):
+        newline = content.find("\n")
+        content = EXPECTED_SHEBANG + (content[newline:] if newline != -1 else "\n")
+    else:
+        content = EXPECTED_SHEBANG + "\n" + content
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+
+
+def module_docstring_lineno(tree):
+    """Return the 1-based line of the module docstring, or None if absent."""
+    body = getattr(tree, "body", None)
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        return body[0].lineno
+    return None
+
+
+def has_header_comment(lines, doc_lineno):
+    """True if a comment line sits between the shebang and the module docstring."""
+    return any(line.lstrip().startswith("#") for line in lines[1 : doc_lineno - 1])
+
+
+def git_config(key):
+    """Return `git config <key>`, or "" if unavailable."""
+    try:
+        result = subprocess.run(
+            ["git", "config", key],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        return result.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def git_config_user_name():
+    """Return `git config user.name`, or "" if unavailable."""
+    return git_config("user.name")
+
+
+def git_created_by(path):
+    """Return (author, year) for `path`'s creation.
+
+    Uses the original commit that added the file (author name + author-date year).
+    If that commit's author email matches the current git config email but the
+    name differs, the current config name is used instead -- i.e. the same person
+    committing under a different name spelling (jgstew vs JGStew) is normalized to
+    their current canonical name, while the original creation year is kept.
+
+    Falls back to the current git user and current year for a new or untracked
+    file that has no creating commit yet. (`--follow` is intentionally omitted: it
+    is incompatible with `--reverse --diff-filter=A` and yields no output.)
+    """
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "log",
+                "--reverse",
+                "--diff-filter=A",
+                "--format=%an%x09%ae%x09%ad",
+                "--date=format:%Y",
+                "--",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        first = next(
+            (ln for ln in result.stdout.splitlines() if ln.count("\t") >= 2), ""
+        )
+        if first:
+            name, email, year = (part.strip() for part in first.split("\t", 2))
+            if name and year:
+                current_email = git_config("user.email")
+                current_name = git_config_user_name()
+                same_person = (
+                    current_email and email and email.lower() == current_email.lower()
+                )
+                if same_person and current_name and name != current_name:
+                    name = current_name
+                return name, year
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return (git_config_user_name() or "Unknown", str(datetime.date.today().year))
+
+
+def apply_header_comment_fix(path, author, year):
+    """Insert `# Created by <author> <year>` directly after the shebang line."""
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+    lines[1:1] = [f"# Created {year} by {author}"]
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+
+
+def imports_autopkglib(tree):
+    """True if the module imports autopkglib -- the marker of an AutoPkg processor.
+
+    Matches `import autopkglib`, `import autopkglib.something`, and
+    `from autopkglib[.sub] import ...`, anywhere in the file (including inside a
+    try/except) so guarded imports still count. This is the essential property
+    every processor must have; files without it are not processors.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "autopkglib" or alias.name.startswith("autopkglib."):
+                    return True
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module == "autopkglib" or module.startswith("autopkglib."):
+                return True
+    return False
+
+
+# The top-level facts the module-level checks operate on, gathered in one pass.
+ModuleInfo = collections.namedtuple(
+    "ModuleInfo",
+    ["all_names", "imports", "classes", "main_guard", "guard_is_last"],
+)
+
+
+def scan_module(tree):
+    """Walk the module's top-level nodes once and collect the facts checks need.
+
+    Returns a ModuleInfo with:
+      all_names     list from `__all__`, or None if it is not declared
+      imports       names imported from any `autopkglib*` module
+      classes       {name: ClassDef} for every top-level class
+      main_guard    the `if __name__ == "__main__":` ast.If node, or None
+      guard_is_last True if that guard is the last top-level statement
+    """
+    all_names = None
+    imports = set()
+    classes = {}
+    main_guard = None
+
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "__all__":
+                    if isinstance(node.value, (ast.List, ast.Tuple)):
+                        all_names = [
+                            e.value
+                            for e in node.value.elts
+                            if isinstance(e, ast.Constant) and isinstance(e.value, str)
+                        ]
+                    else:
+                        all_names = []
+        elif (
+            isinstance(node, ast.ImportFrom)
+            and node.module
+            and node.module.startswith("autopkglib")
+        ):
+            imports |= {alias.name for alias in node.names}
+        elif isinstance(node, ast.ClassDef):
+            classes[node.name] = node
+        elif isinstance(node, ast.If):
+            test = node.test
+            if (
+                isinstance(test, ast.Compare)
+                and isinstance(test.left, ast.Name)
+                and test.left.id == "__name__"
+            ):
+                main_guard = node
+
+    guard_is_last = bool(tree.body) and tree.body[-1] is main_guard
+    return ModuleInfo(all_names, imports, classes, main_guard, guard_is_last)
+
+
+def pick_processor_class(info, stem):
+    """Return the processor ClassDef, preferring the one named after the file.
+
+    Falls back to the first class listed in `__all__`, then to the first class
+    defined in the module. Returns None if the module defines no classes.
+    """
+    proc = info.classes.get(stem)
+    if proc is None and info.all_names:
+        proc = next(
+            (info.classes[n] for n in info.all_names if n in info.classes), None
+        )
+    if proc is None and info.classes:
+        proc = next(iter(info.classes.values()))
+    return proc
+
+
+def class_members(proc):
+    """Return (attrs, main_func) for a class.
+
+    attrs maps each simple-name class attribute to its assigned value node;
+    main_func is the `main` method's FunctionDef (or None).
+    """
+    attrs = {}
+    main_func = None
+    for item in proc.body:
+        if isinstance(item, ast.Assign):
+            for target in item.targets:
+                if isinstance(target, ast.Name):
+                    attrs[target.id] = item.value
+        elif (
+            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and item.name == "main"
+        ):
+            main_func = item
+    return attrs, main_func
+
+
+def apply_module_docstring_fix(path, classname):
+    """Insert a module docstring after the file's header (shebang + comments).
+
+    Writes `\"\"\"See docstring for <classname> class\"\"\"` as the module's first
+    statement, leaving a blank line before the code that follows.
+    """
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+    # header = the contiguous run of shebang/comment lines at the very top
+    i = 0
+    while i < len(lines) and lines[i].startswith("#"):
+        i += 1
+    insert = [f'"""See docstring for {classname} class"""']
+    # keep a blank line between the docstring and following code
+    if i < len(lines) and lines[i].strip() != "":
+        insert.append("")
+    lines[i:i] = insert
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+
+
+def description_string_assign(proc):
+    """Return the class's `description = "<str>"` Assign node, if convertible.
+
+    Only returns the node when `description` is the FIRST statement in the class
+    body and is assigned a plain string literal -- the case where the string can
+    be safely promoted to the class docstring. Returns None otherwise.
+    """
+    if not proc.body or not isinstance(proc.body[0], ast.Assign):
+        return None
+    assign = proc.body[0]
+    is_description = any(
+        isinstance(t, ast.Name) and t.id == "description" for t in assign.targets
+    )
+    if not is_description:
+        return None
+    if isinstance(assign.value, ast.Constant) and isinstance(assign.value.value, str):
+        return assign
+    return None
+
+
+def redundant_doc_assign(proc):
+    """Return a redundant `__doc__ = description` Assign node, if present.
+
+    It is redundant only when the class also sets `description = __doc__` (our
+    convention): then `__doc__ = description` reduces to `__doc__ = __doc__`, a
+    no-op. Returns None when either statement is missing -- e.g. a class that
+    sets `description` to a plain string still needs `__doc__ = description` to
+    populate its docstring, so that case is left alone.
+    """
+    has_description_from_doc = False
+    doc_assign = None
+    for item in proc.body:
+        if not isinstance(item, ast.Assign):
+            continue
+        targets = [t.id for t in item.targets if isinstance(t, ast.Name)]
+        value_name = item.value.id if isinstance(item.value, ast.Name) else None
+        if "description" in targets and value_name == "__doc__":
+            has_description_from_doc = True
+        elif "__doc__" in targets and value_name == "description":
+            doc_assign = item
+    return doc_assign if (has_description_from_doc and doc_assign) else None
+
+
+def apply_remove_doc_assign_fix(path, assign):
+    """Delete a redundant `__doc__ = description` assignment's source line(s).
+
+    Also collapses a doubled blank line left where the statement used to be, so
+    the class body keeps a single blank separator.
+    """
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+    start = assign.lineno - 1
+    end = (assign.end_lineno or assign.lineno) - 1
+    del lines[start : end + 1]
+    if (
+        0 < start < len(lines)
+        and not lines[start - 1].strip()
+        and not lines[start].strip()
+    ):
+        del lines[start]
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+
+
+def apply_class_docstring_from_description_fix(path, assign):
+    """Promote a `description = "<str>"` assignment to the class docstring.
+
+    Rewrites the assignment's source line(s) as a triple-quoted docstring
+    followed by `description = __doc__`, preserving indentation.
+    """
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+    start = assign.lineno - 1
+    end = (assign.end_lineno or assign.lineno) - 1
+    indent = " " * assign.col_offset
+    text = assign.value.value
+    replacement = [
+        f'{indent}"""{text}"""',
+        "",
+        f"{indent}description = __doc__",
+    ]
+    lines[start : end + 1] = replacement
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+
+
+def apply_add_input_vars_fix(path, base_indent, dict_node, keys):
+    """Add `keys` to an input_variables dict, each with a blank description.
+
+    Each entry is `"<key>": {"required": False, "description": ""}`. The blank
+    description is intentional: it is reported by E020 on the next run so a human
+    fills it in. New entries are inserted right after the opening `{` (so no
+    dependency on the existing last entry's trailing comma); an empty `{}` dict is
+    expanded to a multi-line one. Returns True if applied, False if the dict shape
+    is one this fixer will not touch (e.g. a single-line non-empty dict).
+    """
+    with open(path, encoding="utf-8") as handle:
+        src = handle.read()
+    entry_indent = " " * (base_indent + 4)
+    val_indent = " " * (base_indent + 8)
+    block = []
+    for key in keys:
+        block += [
+            f'{entry_indent}"{key}": {{',
+            f'{val_indent}"required": False,',
+            f'{val_indent}"description": "",',
+            f"{entry_indent}}},",
+        ]
+
+    lines = src.split("\n")
+    if dict_node.keys:
+        open_idx = dict_node.lineno - 1
+        if not lines[open_idx].rstrip().endswith("{"):
+            return False  # single-line non-empty dict; leave it for a human
+        lines[open_idx + 1 : open_idx + 1] = block
+        new_src = "\n".join(lines)
+    else:
+        line_starts = [0]
+        for line in src.splitlines(keepends=True):
+            line_starts.append(line_starts[-1] + len(line))
+        open_off = line_starts[dict_node.lineno - 1] + dict_node.col_offset
+        close_off = line_starts[dict_node.end_lineno - 1] + dict_node.end_col_offset
+        replacement = "{\n" + "\n".join(block) + "\n" + " " * base_indent + "}"
+        new_src = src[:open_off] + replacement + src[close_off:]
+
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(new_src)
+    return True
+
+
+def convertible_print_calls(proc):
+    """Return print() Call nodes that can be safely rewritten to self.output().
+
+    Restricted to calls with exactly one positional argument (not a `*splat`)
+    and no keywords, located inside an instance method (first parameter `self`)
+    so `self.output` is in scope. Other print() calls remain E028 errors for a
+    human to handle (multiple args, file=/sep=/end= kwargs, staticmethods, ...).
+    """
+    calls = []
+    for item in proc.body:
+        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not (item.args.args and item.args.args[0].arg == "self"):
+            continue
+        for node in ast.walk(item):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "print"
+                and len(node.args) == 1
+                and not node.keywords
+                and not isinstance(node.args[0], ast.Starred)
+            ):
+                calls.append(node)
+    return calls
+
+
+def apply_print_to_output_fix(path, calls):
+    """Rewrite each `print(arg)` to `self.output(arg, 3)`, preserving arg source.
+
+    Verbosity 3 keeps the message quiet unless AutoPkg is run with -vvv. Edits
+    are spliced by absolute source offset, back-to-front, so multi-line calls
+    and repeated text are handled correctly.
+    """
+    with open(path, encoding="utf-8") as handle:
+        src = handle.read()
+    line_starts = [0]
+    for line in src.splitlines(keepends=True):
+        line_starts.append(line_starts[-1] + len(line))
+
+    def offset(lineno, col):
+        return line_starts[lineno - 1] + col
+
+    spans = []
+    for node in calls:
+        call_start = offset(node.lineno, node.col_offset)
+        call_end = offset(node.end_lineno, node.end_col_offset)
+        arg = node.args[0]
+        arg_src = src[
+            offset(arg.lineno, arg.col_offset) : offset(
+                arg.end_lineno, arg.end_col_offset
+            )
+        ]
+        spans.append((call_start, call_end, arg_src))
+    for call_start, call_end, arg_src in sorted(spans, reverse=True):
+        src = src[:call_start] + f"self.output({arg_src}, 3)" + src[call_end:]
+
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(src)
+
+
+# --- individual checks -------------------------------------------------------
+# Each returns a (possibly empty) list of (lineno, check_id, message) tuples and
+# never mutates anything, so they can be read, tested, and reordered in
+# isolation. check_file just calls them in order and concatenates the results.
+
+
+def check_module_docstring(tree):
+    """E002: the module must have a plain-string docstring."""
+    if not ast.get_docstring(tree):
+        return [docstring_issue(tree, 1, "E002", "module-level")]
+    return []
+
+
+def check_all_declared(info):
+    """E003: the module must declare `__all__`."""
+    if info.all_names is None:
+        return [(1, "E003", "missing `__all__` declaration")]
+    return []
+
+
+def check_processor_error_import(info):
+    """E005: `ProcessorError` should be imported from autopkglib (convention)."""
+    if "ProcessorError" not in info.imports:
+        return [(1, "E005", "should import `ProcessorError` from autopkglib")]
+    return []
+
+
+def check_autopkglib_import(tree):
+    """E031: a processor must import from autopkglib.
+
+    This is normally guaranteed by the W001 gate, but a file kept in scope as a
+    new-processor stub or by subclassing a known base can still be missing it.
+    Auto-fixed by maybe_fix_autopkglib_import; reported here otherwise.
+    """
+    if not imports_autopkglib(tree):
+        return [
+            (
+                1,
+                "E031",
+                "processor must import from autopkglib "
+                "(e.g. `from autopkglib import Processor, ProcessorError`)",
+            )
+        ]
+    return []
+
+
+def canonical_guard_lines(classname):
+    """The exact source lines a `__main__` guard must have for `classname`."""
+    return [
+        'if __name__ == "__main__":',
+        f"    PROCESSOR = {classname}()",
+        "    PROCESSOR.execute_shell()",
+    ]
+
+
+def guard_is_canonical(guard, classname):
+    """True if the guard body is exactly the canonical two statements.
+
+    Canonical form: `PROCESSOR = <classname>()` then `PROCESSOR.execute_shell()`.
+    """
+    body = guard.body
+    if len(body) != 2:
+        return False
+    assign, call = body
+    ok_assign = (
+        isinstance(assign, ast.Assign)
+        and len(assign.targets) == 1
+        and isinstance(assign.targets[0], ast.Name)
+        and assign.targets[0].id == "PROCESSOR"
+        and isinstance(assign.value, ast.Call)
+        and isinstance(assign.value.func, ast.Name)
+        and assign.value.func.id == classname
+        and not assign.value.args
+        and not assign.value.keywords
+    )
+    ok_call = (
+        isinstance(call, ast.Expr)
+        and isinstance(call.value, ast.Call)
+        and isinstance(call.value.func, ast.Attribute)
+        and call.value.func.attr == "execute_shell"
+        and isinstance(call.value.func.value, ast.Name)
+        and call.value.func.value.id == "PROCESSOR"
+        and not call.value.args
+    )
+    return ok_assign and ok_call
+
+
+def check_main_guard(proc, info):
+    """E006/E007/W003: enforce the canonical `__main__` guard at the file end."""
+    guard = info.main_guard
+    if guard is None:
+        return [(1, "E006", 'missing `if __name__ == "__main__":` block')]
+    issues = []
+    if not guard_is_canonical(guard, proc.name):
+        issues.append(
+            (
+                guard.lineno,
+                "E007",
+                f"`__main__` block must be exactly "
+                f"`PROCESSOR = {proc.name}()` then `PROCESSOR.execute_shell()`",
+            )
+        )
+    if not info.guard_is_last:
+        issues.append(
+            (
+                guard.lineno,
+                "W003",
+                "`__main__` guard should be the last statement in the file",
+            )
+        )
+    return issues
+
+
+def check_class_naming(proc, stem, info):
+    """E010/E011: class name should match the filename and be listed in `__all__`."""
+    issues = []
+    if proc.name != stem:
+        issues.append(
+            (
+                proc.lineno,
+                "E010",
+                f"class `{proc.name}` should be named `{stem}` to match the filename",
+            )
+        )
+    if info.all_names is not None and proc.name not in info.all_names:
+        issues.append(
+            (proc.lineno, "E011", f"`{proc.name}` should be listed in `__all__`")
+        )
+    return issues
+
+
+def check_class_name_camelcase(proc, source_lines):
+    """E032: the processor class name must be strict CamelCase.
+
+    Each word is a single leading capital followed by lowercase/digits; runs of
+    capitals (acronyms) are rejected UNLESS the acronym is in ALLOWED_ACRONYMS
+    (kept to AutoPkg's built-in URL/CURL). Any other acronym (JSON, BES, PE, ...)
+    is a per-processor exception: put `# processor-name-ok` on (or just above) the
+    class line to opt out.
+    """
+    if CAMEL_CASE_RE.fullmatch(proc.name):
+        return []
+    if line_has_marker(source_lines, proc.lineno, PROCESSOR_NAME_MARKER):
+        return []
+    allowed = ", ".join(sorted(ALLOWED_ACRONYMS))
+    return [
+        (
+            proc.lineno,
+            "E032",
+            f"class `{proc.name}` should be strict CamelCase (one capital per "
+            f"word; capital runs only for allowed acronyms: {allowed}); rename it, "
+            f"or add `# {PROCESSOR_NAME_MARKER}` if the name is intentional",
+        )
+    ]
+
+
+def check_base_class(proc, info):
+    """E004: the class must subclass a recognized AutoPkg Processor base."""
+    recognized = KNOWN_BASES | info.imports
+    if not (set(base_names(proc)) & recognized):
+        return [
+            (
+                proc.lineno,
+                "E004",
+                f"`{proc.name}` should subclass an AutoPkg Processor base (e.g. Processor)",
+            )
+        ]
+    return []
+
+
+def check_class_docstring(proc):
+    """E012: the class must have a plain-string docstring."""
+    if not ast.get_docstring(proc):
+        return [docstring_issue(proc, proc.lineno, "E012", f"class `{proc.name}`")]
+    return []
+
+
+def check_class_docstring_sufficient(proc):
+    """E024: the class docstring must actually document the processor.
+
+    The class docstring is a processor's primary documentation -- AutoPkg shows
+    it as the processor description (via `description = __doc__`). A trivial
+    one-liner or the generated `"<Class> processor."` stub is rejected so it gets
+    expanded and kept current. (E012 handles a missing docstring.)
+    """
+    doc = ast.get_docstring(proc)
+    if doc is None:
+        return []
+    stripped = doc.strip()
+    is_stub = stripped.rstrip(".").strip().lower() == f"{proc.name.lower()} processor"
+    if len(stripped) < MIN_CLASS_DOCSTRING_LEN or is_stub:
+        return [
+            (
+                proc.lineno,
+                "E024",
+                f"class `{proc.name}` docstring is too brief; it is this "
+                "processor's primary documentation (AutoPkg shows it as the "
+                "description) -- expand it to describe what the processor does, "
+                "its input_variables, and its output_variables",
+            )
+        ]
+    return []
+
+
+_DOCSTRING_INDEX = None
+
+
+def class_docstring_index(root="."):
+    """Map each normalized processor class docstring to the files that use it.
+
+    Built once per run (memoized) by scanning every processor file under `root`,
+    so the cross-file duplicate check (W011) works even when pre-commit passes
+    only the changed files. Whitespace is collapsed so docstrings differing only
+    in wrapping still count as identical.
+    """
+    global _DOCSTRING_INDEX
+    if _DOCSTRING_INDEX is None:
+        index = collections.defaultdict(list)
+        for path in discover_processor_files(root):
+            try:
+                with open(path, encoding="utf-8", errors="replace") as handle:
+                    tree = ast.parse(handle.read())
+            except (OSError, SyntaxError):
+                continue
+            stem = os.path.splitext(os.path.basename(path))[0]
+            proc = pick_processor_class(scan_module(tree), stem)
+            doc = ast.get_docstring(proc) if proc is not None else None
+            if doc and doc.strip():
+                index[" ".join(doc.split())].append(os.path.normpath(path))
+        _DOCSTRING_INDEX = dict(index)
+    return _DOCSTRING_INDEX
+
+
+def check_duplicate_class_docstring(proc, path):
+    """E033: a processor's class docstring must be unique across the repo.
+
+    The class docstring is the processor's description (via `description =
+    __doc__`), so a docstring shared verbatim by another processor is a
+    copy-paste that no longer fits one of them. Cross-file; reports the OTHER
+    processor file(s) with the same docstring.
+    """
+    doc = ast.get_docstring(proc)
+    if not doc or not doc.strip():
+        return []
+    key = " ".join(doc.split())
+    others = [
+        p for p in class_docstring_index().get(key, []) if p != os.path.normpath(path)
+    ]
+    if not others:
+        return []
+    shown = ", ".join(sorted(others))
+    return [
+        (
+            proc.lineno,
+            "E033",
+            f"class docstring is identical to: {shown}; each processor's docstring "
+            f"is its description and should be distinct -- add "
+            f"`# {DUPLICATE_DOCSTRING_MARKER}` if intentional",
+        )
+    ]
+
+
+def check_description(proc, attrs):
+    """E013: `description` should be `__doc__` (the class docstring is the source)."""
+    desc = attrs.get("description")
+    if desc is None:
+        return [(proc.lineno, "E013", "class should set `description = __doc__`")]
+    if not (isinstance(desc, ast.Name) and desc.id == "__doc__"):
+        return [
+            (
+                getattr(desc, "lineno", proc.lineno),
+                "E013",
+                "`description` should be `__doc__` (write the description as the class docstring)",
+            )
+        ]
+    return []
+
+
+def check_variable_attrs(proc, attrs):
+    """E014-E017: input_variables/output_variables must exist as dict literals."""
+    issues = []
+    for attr_name, miss_id, type_id in (
+        ("input_variables", "E014", "E015"),
+        ("output_variables", "E016", "E017"),
+    ):
+        if attr_name not in attrs:
+            issues.append((proc.lineno, miss_id, f"class should define `{attr_name}`"))
+        elif not isinstance(attrs[attr_name], ast.Dict):
+            issues.append(
+                (proc.lineno, type_id, f"`{attr_name}` should be a dict literal")
+            )
+    return issues
+
+
+def check_input_variable_entries(attrs):
+    """E020/E021: each input_variable entry needs `description` and `required`."""
+    issues = []
+    node = attrs.get("input_variables")
+    if not isinstance(node, ast.Dict):
+        return issues
+    for var_name, spec in dict_entries(node):
+        if not isinstance(spec, ast.Dict):
+            continue
+        desc = dict_get_value(spec, "description")
+        if desc is None:
+            issues.append(
+                (
+                    spec.lineno,
+                    "E020",
+                    f"input_variable `{var_name}` missing `description`",
+                )
+            )
+        elif is_blank_string(desc):
+            issues.append(
+                (
+                    desc.lineno,
+                    "E020",
+                    f"input_variable `{var_name}` has an empty `description`",
+                )
+            )
+        if not dict_has_key(spec, "required"):
+            issues.append(
+                (
+                    spec.lineno,
+                    "E021",
+                    f"input_variable `{var_name}` should declare `required`",
+                )
+            )
+    return issues
+
+
+def check_output_variable_entries(attrs):
+    """E022: each output_variable entry needs a `description`."""
+    issues = []
+    node = attrs.get("output_variables")
+    if not isinstance(node, ast.Dict):
+        return issues
+    for var_name, spec in dict_entries(node):
+        if isinstance(spec, ast.Dict) and not dict_has_key(spec, "description"):
+            issues.append(
+                (
+                    spec.lineno,
+                    "E022",
+                    f"output_variable `{var_name}` missing `description`",
+                )
+            )
+    return issues
+
+
+def check_variable_name_style(attrs, source_lines):
+    """W010: input_variable / output_variable keys should be snake_case.
+
+    A warning (not an error): the repo has intentional exceptions -- keys that
+    mirror external field names (PE/MSI metadata like `file_peinfo_ProductName`,
+    the `User_Agent` header) and the AutoPkg ALL_CAPS config convention
+    (`COMPUTE_HASHES`). Those opt out with a `# variable-name-ok` comment on (or
+    just above) the key's line. Reported at the key's own line.
+    """
+    issues = []
+    for attr_name, label in (
+        ("input_variables", "input_variable"),
+        ("output_variables", "output_variable"),
+    ):
+        node = attrs.get(attr_name)
+        if not isinstance(node, ast.Dict):
+            continue
+        for key_node in node.keys:
+            if not (
+                isinstance(key_node, ast.Constant) and isinstance(key_node.value, str)
+            ):
+                continue
+            key = key_node.value
+            if SNAKE_CASE_RE.match(key):
+                continue
+            lineno = getattr(key_node, "lineno", node.lineno)
+            if line_has_marker(source_lines, lineno, VARIABLE_NAME_MARKER):
+                continue
+            issues.append(
+                (
+                    lineno,
+                    "W010",
+                    f"{label} `{key}` is not snake_case; rename it or add "
+                    f"`# {VARIABLE_NAME_MARKER}`",
+                )
+            )
+    return issues
+
+
+def check_main_method(proc, main_func):
+    """E018/E019: the class must define `main()` and it must have a docstring."""
+    if main_func is None:
+        return [
+            (
+                proc.lineno,
+                "E018",
+                f"class `{proc.name}` should define a `main()` method",
+            )
+        ]
+    if not ast.get_docstring(main_func):
+        return [docstring_issue(main_func, main_func.lineno, "E019", "`main()`")]
+    return []
+
+
+def check_redundant_doc_assign(proc):
+    """E023: drop `__doc__ = description` when `description = __doc__` is set."""
+    assign = redundant_doc_assign(proc)
+    if assign is not None:
+        return [
+            (
+                assign.lineno,
+                "E023",
+                "redundant `__doc__ = description` (already set via `description = __doc__`)",
+            )
+        ]
+    return []
+
+
+def check_no_print(proc):
+    """E028: processors must log via `self.output(...)`, never `print(...)`."""
+    issues = []
+    for node in ast.walk(proc):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "print"
+        ):
+            issues.append(
+                (
+                    node.lineno,
+                    "E028",
+                    "use `self.output(...)` instead of `print(...)` in a processor",
+                )
+            )
+    return issues
+
+
+def _is_self_env(node):
+    """True if `node` is the `self.env` attribute access."""
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "env"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "self"
+    )
+
+
+def class_env_usage(proc):
+    """Inspect every `self.env` access in the class.
+
+    Returns (writes_static, writes_dynamic, reads):
+      writes_static   set of string keys assigned (`self.env["k"] = ...`)
+      writes_dynamic  True if any write uses a non-constant key, or .update()/
+                      .setdefault() is called (so keys cannot be enumerated)
+      reads           list of (key, lineno) for constant-key reads
+                      (`self.env["k"]` in load context or `self.env.get("k")`)
+
+    Reads nested inside the default argument(s) of a `self.env.get(...)` call are
+    excluded -- in `self.env.get("primary", self.env.get("fallback"))` only the
+    primary key is a real input; the fallback is just a default value.
+    """
+    # Identify env reads that are fallback defaults of a self.env.get() call, so
+    # they can be skipped: everything inside any get()'s args[1:] subtree.
+    fallback_node_ids = set()
+    for node in ast.walk(proc):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get"
+            and _is_self_env(node.func.value)
+        ):
+            for default in node.args[1:]:
+                fallback_node_ids.update(id(sub) for sub in ast.walk(default))
+
+    writes_static = set()
+    writes_dynamic = False
+    reads = []
+    for node in ast.walk(proc):
+        if isinstance(node, ast.Subscript) and _is_self_env(node.value):
+            is_const = isinstance(node.slice, ast.Constant) and isinstance(
+                node.slice.value, str
+            )
+            if isinstance(node.ctx, ast.Store):
+                if is_const:
+                    writes_static.add(node.slice.value)
+                else:
+                    writes_dynamic = True
+            elif is_const and id(node) not in fallback_node_ids:
+                reads.append((node.slice.value, node.lineno))
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and _is_self_env(node.func.value)
+        ):
+            if node.func.attr in ("update", "setdefault"):
+                writes_dynamic = True
+            elif (
+                node.func.attr == "get"
+                and node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+                and id(node) not in fallback_node_ids
+            ):
+                reads.append((node.args[0].value, node.lineno))
+    return writes_static, writes_dynamic, reads
+
+
+def check_outputs_assigned(proc, attrs):
+    """E029: every declared output_variable must actually be set via self.env.
+
+    Suppressed entirely when the class writes self.env with a dynamic key (or
+    .update()/.setdefault()), since the set of keys then cannot be proven.
+
+    A key that is also an input_variable is exempt: declaring it as an output as
+    well is a deliberate convention -- it makes AutoPkg re-display the value in
+    verbose runs (showing whether the processor changed it or left it as-is),
+    even though the processor never reassigns it via self.env.
+    """
+    node = attrs.get("output_variables")
+    if not isinstance(node, ast.Dict):
+        return []  # missing/non-dict is E016/E017's job
+    writes_static, writes_dynamic, _ = class_env_usage(proc)
+    if writes_dynamic:
+        return []
+    inp = attrs.get("input_variables")
+    input_keys = (
+        {key for key, _ in dict_entries(inp)} if isinstance(inp, ast.Dict) else set()
+    )
+    issues = []
+    for var_name, spec in dict_entries(node):
+        if var_name in writes_static or var_name in input_keys:
+            continue
+        issues.append(
+            (
+                getattr(spec, "lineno", proc.lineno),
+                "E029",
+                f"output_variable `{var_name}` is declared but never set via self.env",
+            )
+        )
+    return issues
+
+
+def check_outputs_declared(proc, attrs, source_lines):
+    """W004 (warning): a `self.env["k"] = ...` write whose key is not an output.
+
+    A value written to self.env but not declared in output_variables is invisible
+    to recipe authors. This is a warning, not an error, because some writes are
+    intentionally undeclared. Exempt: keys in output_variables or input_variables,
+    ALL_CAPS config/credentials, AUTOPKG_BUILTINS control vars (e.g.
+    stop_processing_recipe), keys the processor also reads (internal state such as
+    a cached requests_session), and any write whose line carries the
+    `# output-undeclared-ok` marker (for deliberately undeclared large values).
+    """
+    out = attrs.get("output_variables")
+    inp = attrs.get("input_variables")
+    out_keys = (
+        {key for key, _ in dict_entries(out)} if isinstance(out, ast.Dict) else set()
+    )
+    inp_keys = (
+        {key for key, _ in dict_entries(inp)} if isinstance(inp, ast.Dict) else set()
+    )
+    _, _, reads = class_env_usage(proc)
+    read_keys = {key for key, _ in reads}
+    exempt = out_keys | inp_keys | read_keys | AUTOPKG_BUILTINS
+
+    issues = []
+    seen = set()
+    for node in ast.walk(proc):
+        if not (
+            isinstance(node, ast.Subscript)
+            and _is_self_env(node.value)
+            and isinstance(node.ctx, ast.Store)
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+        ):
+            continue
+        key = node.slice.value
+        if key in seen or key in exempt or key.isupper():
+            continue
+        if line_has_marker(source_lines, node.lineno, OUTPUT_UNDECLARED_MARKER):
+            continue
+        seen.add(key)
+        issues.append(
+            (
+                node.lineno,
+                "W004",
+                f"writes env key `{key}` not declared in output_variables",
+            )
+        )
+    return issues
+
+
+def sibling_test_dirs(path):
+    """Return sibling folders of the processor whose name contains "test".
+
+    These are the sibling directories (case-insensitive "test" in the name, e.g.
+    Test-Recipes/) that hold this repo's test recipes. Shared by the W005 check
+    and its auto-fix so both agree on where test recipes live.
+    """
+    proc_dir = os.path.dirname(path)
+    repo_root = os.path.dirname(proc_dir)
+    dirs = []
+    try:
+        for entry in sorted(os.listdir(repo_root or ".")):
+            full = os.path.join(repo_root, entry)
+            if full != proc_dir and "test" in entry.lower() and os.path.isdir(full):
+                dirs.append(full)
+    except OSError:
+        pass
+    return dirs
+
+
+def is_test_recipe_name(name, stem):
+    """True if `name` is a test recipe for `stem`.
+
+    Matches `<stem>.test.recipe.yaml` and `<stem>-*.test.recipe.yaml` variants
+    (e.g. `<stem>-Win.test.recipe.yaml`).
+    """
+    suffix = ".test.recipe.yaml"
+    return name == stem + suffix or (
+        name.startswith(stem + "-") and name.endswith(suffix)
+    )
+
+
+def check_test_recipe(path, stem):
+    """W005: a processor should have at least one test recipe.
+
+    Looks for `<stem>.test.recipe.yaml` (or a `<stem>-*.test.recipe.yaml` variant,
+    e.g. `<stem>-Win.test.recipe.yaml`) in the processor's own folder or in any
+    sibling folder whose name contains "test" (case-insensitive), e.g.
+    Test-Recipes/. Auto-fixed by maybe_fix_test_recipe (which writes a stub into a
+    sibling test folder when one exists); reported here otherwise.
+    """
+    proc_dir = os.path.dirname(path)
+    search_dirs = [proc_dir or "."] + sibling_test_dirs(path)
+    for directory in search_dirs:
+        try:
+            if any(is_test_recipe_name(name, stem) for name in os.listdir(directory)):
+                return []
+        except OSError:
+            continue
+
+    return [
+        (
+            1,
+            "W005",
+            f"no test recipe found (expected a {stem}*.test.recipe.yaml in this "
+            'folder or a sibling "*test*" folder)',
+        )
+    ]
+
+
+def check_platform_imports(tree, source_lines):
+    """W006: importing a platform-specific module in a cross-platform processor.
+
+    Flags imports of PLATFORM_SPECIFIC_MODULES (macOS pyobjc, Windows-only, ...).
+    A genuinely platform-specific processor can opt out with the
+    `# platform-specific-ok` marker on (or just above) the import line.
+    """
+    issues = []
+    for node in ast.walk(tree):
+        names = []
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            names = [node.module]
+        for name in names:
+            if name.split(".")[0] in PLATFORM_SPECIFIC_MODULES:
+                if line_has_marker(source_lines, node.lineno, PLATFORM_IMPORT_MARKER):
+                    continue
+                issues.append(
+                    (
+                        node.lineno,
+                        "W006",
+                        f"imports platform-specific module `{name}`; guard it and "
+                        f"add `# {PLATFORM_IMPORT_MARKER}` if intentional",
+                    )
+                )
+    return issues
+
+
+def check_hardcoded_paths(tree, source_lines):
+    """W008: a string literal pinned to a user/machine-specific path.
+
+    Flags home dirs and per-user temp/profile paths (almost always accidental).
+    Standard tool locations (/usr/local/bin, /opt/homebrew, ...) are NOT matched.
+    Opt out a deliberate one with the `# hardcoded-path-ok` marker.
+    """
+    issues = []
+    seen = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        if not HARDCODED_PATH_RE.match(node.value):
+            continue
+        key = (node.lineno, node.value)
+        if key in seen:
+            continue
+        if line_has_marker(source_lines, node.lineno, HARDCODED_PATH_MARKER):
+            continue
+        seen.add(key)
+        issues.append(
+            (
+                node.lineno,
+                "W008",
+                f"hardcoded user/machine-specific path {node.value!r}",
+            )
+        )
+    return issues
+
+
+def check_inputs_read(proc, attrs, source_lines):
+    """W007: an input_variable declared but never read from self.env.
+
+    Suppressed when the class subclasses another processor (inputs may be
+    consumed by the parent), when self.env is read with a dynamic key (cannot be
+    proven), or when the declaration carries the `# input-unread-ok` marker.
+    """
+    node = attrs.get("input_variables")
+    if not isinstance(node, ast.Dict):
+        return []
+    # inputs of a subclass may be consumed by its parent processor -> can't prove
+    if set(base_names(proc)) - {"Processor"}:
+        return []
+    read_keys, dynamic = env_read_info(proc)
+    if dynamic:
+        return []
+    issues = []
+    for var_name, spec in dict_entries(node):
+        lineno = getattr(spec, "lineno", proc.lineno)
+        if var_name in read_keys:
+            continue
+        if line_has_marker(source_lines, lineno, INPUT_UNREAD_MARKER):
+            continue
+        issues.append(
+            (
+                lineno,
+                "W007",
+                f"input_variable `{var_name}` is declared but never read from self.env",
+            )
+        )
+    return issues
+
+
+def check_all_defined(tree, info):
+    """E026: every name in `__all__` must be defined in this file.
+
+    The name need not be a class -- functions and module constants are fine
+    (e.g. SharedUtilityMethods exports helpers). E003 handles a missing `__all__`.
+    """
+    if info.all_names is None:
+        return []
+    defined = module_defined_names(tree.body)
+    return [
+        (1, "E026", f"`__all__` lists `{name}` which is not defined in this file")
+        for name in info.all_names
+        if name not in defined
+    ]
+
+
+def undeclared_env_reads(proc, attrs):
+    """Return [(key, lineno), ...] for env reads that should be declared inputs.
+
+    Allowed without declaration: keys in input_variables or output_variables, the
+    AUTOPKG_BUILTINS download-chain/core variables, ALL_CAPS keys (external
+    configuration/credentials, e.g. BES_PASSWORD, supplied via the environment),
+    and any key the class also writes to self.env (its own cached/internal state,
+    not an input -- e.g. a pickled requests_session round-tripped across runs).
+    One entry per key, at its first read; this backs both E030 and its auto-fix.
+    """
+    inp = attrs.get("input_variables")
+    out = attrs.get("output_variables")
+    declared = set()
+    for dict_node in (inp, out):
+        if isinstance(dict_node, ast.Dict):
+            declared |= {key for key, _ in dict_entries(dict_node)}
+    writes_static, _, reads = class_env_usage(proc)
+    allowed = declared | AUTOPKG_BUILTINS | writes_static
+    result = []
+    seen = set()
+    for key, lineno in reads:
+        # key.isupper() is True only when every cased char is uppercase and there
+        # is at least one letter -- i.e. ALL_CAPS config/constant style.
+        if key in allowed or key.isupper() or key in seen:
+            continue
+        seen.add(key)
+        result.append((key, lineno))
+    return result
+
+
+def check_inputs_declared(proc, attrs):
+    """E030: env keys read by the class must be declared (see undeclared_env_reads)."""
+    return [
+        (lineno, "E030", f"reads undeclared env key `{key}`; add it to input_variables")
+        for key, lineno in undeclared_env_reads(proc, attrs)
+    ]
+
+
+# --- multi-step auto-fixes ---------------------------------------------------
+# These mutate the file on disk, so they are kept apart from the pure checks.
+
+
+def maybe_fix_module_docstring(path, tree, stem):
+    """Auto-fix a completely missing module docstring (E002).
+
+    Returns (fixed_entry, new_src), or (None, None) when no fix applies. An
+    f-string "docstring" is intentionally left for a human to rewrite.
+    """
+    if ast.get_docstring(tree) or has_fstring_docstring(tree):
+        return None, None
+    proc = pick_processor_class(scan_module(tree), stem)
+    classname = proc.name if proc else stem
+    apply_module_docstring_fix(path, classname)
+    fixed_entry = (
+        1,
+        "E002",
+        f'set module docstring to """See docstring for {classname} class"""',
+    )
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        return fixed_entry, handle.read()
+
+
+def maybe_fix_class_docstring(path, proc, info):
+    """Auto-fix E012+E013 together when convertible.
+
+    When the class has no docstring but sets `description = "<str>"`, promote the
+    string to the class docstring and set `description = __doc__`. Returns the
+    list of fixed entries (empty if nothing was fixed). `info` is unused.
+    """
+    if ast.get_docstring(proc):
+        return []
+    desc_assign = description_string_assign(proc)
+    if desc_assign is None:
+        return []
+    apply_class_docstring_from_description_fix(path, desc_assign)
+    return [
+        (
+            proc.lineno,
+            "E012",
+            f"promoted `description` string to the `{proc.name}` class docstring",
+        ),
+        (desc_assign.lineno, "E013", "set `description = __doc__`"),
+    ]
+
+
+def maybe_fix_redundant_doc_assign(path, proc, info):
+    """Auto-fix E023: remove a redundant `__doc__ = description` assignment.
+
+    Returns the list of fixed entries (empty if nothing was fixed). `info` is
+    unused.
+    """
+    assign = redundant_doc_assign(proc)
+    if assign is None:
+        return []
+    apply_remove_doc_assign_fix(path, assign)
+    return [(assign.lineno, "E023", "removed redundant `__doc__ = description`")]
+
+
+def apply_main_guard_fix(path, info, classname):
+    """Write the canonical `__main__` guard; return its new 1-based start line.
+
+    Appends the guard (after two blank lines) when none exists, or replaces an
+    existing non-canonical guard's source lines in place.
+    """
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+    guard_lines = canonical_guard_lines(classname)
+    if info.main_guard is None:
+        while lines and lines[-1].strip() == "":
+            lines.pop()
+        start = len(lines) + 3  # two blank lines, then the guard's `if` line
+        lines += ["", ""] + guard_lines
+        content = "\n".join(lines) + "\n"
+    else:
+        guard = info.main_guard
+        start = guard.lineno
+        begin = guard.lineno - 1
+        end = (guard.end_lineno or guard.lineno) - 1
+        lines[begin : end + 1] = guard_lines
+        content = "\n".join(lines)
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    return start
+
+
+def maybe_fix_inputs_declared(path, proc, info):
+    """Auto-fix E030: declare each undeclared read key in input_variables.
+
+    Adds `"<key>": {"required": False, "description": ""}`; the blank description
+    then surfaces as E020 for a human to complete. Returns the list of fixed
+    entries (empty if nothing was fixed). `info` is unused.
+    """
+    attrs, _ = class_members(proc)
+    undeclared = undeclared_env_reads(proc, attrs)
+    if not undeclared:
+        return []
+    dict_node = attrs.get("input_variables")
+    if not isinstance(dict_node, ast.Dict):
+        return []  # E014/E015 must be resolved first
+    base_indent = next(
+        (
+            item.col_offset
+            for item in proc.body
+            if isinstance(item, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == "input_variables"
+                for t in item.targets
+            )
+        ),
+        None,
+    )
+    if base_indent is None:
+        return []
+    keys = [key for key, _ in undeclared]
+    if not apply_add_input_vars_fix(path, base_indent, dict_node, keys):
+        return []
+    return [
+        (
+            dict_node.lineno,
+            "E030",
+            f"declared `{key}` in input_variables (blank description)",
+        )
+        for key in keys
+    ]
+
+
+def maybe_fix_print(path, proc, info):
+    """Auto-fix E028: rewrite simple `print(x)` calls to `self.output(x, 3)`.
+
+    Only the safely-convertible calls are rewritten (see convertible_print_calls);
+    any others remain reported as E028. Returns the list of fixed entries.
+    `info` is unused.
+    """
+    calls = convertible_print_calls(proc)
+    if not calls:
+        return []
+    apply_print_to_output_fix(path, calls)
+    return [
+        (node.lineno, "E028", "converted `print(...)` to `self.output(..., 3)`")
+        for node in calls
+    ]
+
+
+def maybe_fix_all_declaration(path, proc, info):
+    """Auto-fix E003: add `__all__ = ["<Class>"]` after the imports.
+
+    Inserted one blank line below the last top-level import, matching the repo
+    convention. Requires a processor class (proc), so a file with no class is not
+    fixable and stays reported. Returns the list of fixed entries.
+    """
+    if info.all_names is not None:
+        return []
+    with open(path, encoding="utf-8") as handle:
+        src = handle.read()
+    last_import = None
+    for node in ast.parse(src).body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            last_import = node
+    if last_import is None:
+        return []
+    insert_at = last_import.end_lineno or last_import.lineno
+    lines = src.split("\n")
+    lines[insert_at:insert_at] = ["", f'__all__ = ["{proc.name}"]']
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+    return [(insert_at + 2, "E003", f'added `__all__ = ["{proc.name}"]`')]
+
+
+def variable_example_lines(kind, indent):
+    """Lines for a documented-but-empty input/output_variables assignment.
+
+    `kind` is "input" or "output"; `indent` is the class-body leading whitespace.
+    A multi-line comment above the empty `{}` shows the expected entry shape so an
+    author knows what to fill in.
+    """
+    if kind == "input":
+        return [
+            f"{indent}# input_variables: every value this processor reads from the",
+            f"{indent}# environment. Document each one. Example entry:",
+            f'{indent}#     "example_input": {{',
+            f'{indent}#         "required": False,',
+            f'{indent}#         "default": "",',
+            f'{indent}#         "description": "What this input controls.",',
+            f"{indent}#     }},",
+            f"{indent}input_variables = {{}}",
+        ]
+    return [
+        f"{indent}# output_variables: every value this processor writes back to",
+        f"{indent}# the environment. Document each one. Example entry:",
+        f'{indent}#     "example_output": {{',
+        f'{indent}#         "description": "What this output contains.",',
+        f"{indent}#     }},",
+        f"{indent}output_variables = {{}}",
+    ]
+
+
+def maybe_fix_autopkglib_import(path):
+    """Auto-fix E031: add `from autopkglib import Processor, ProcessorError`.
+
+    Every processor must import from autopkglib; a brand-new stub may not yet.
+    The import is inserted after the last existing top-level import if there is
+    one, otherwise after the module docstring (with a separating blank line), and
+    failing that at the very top of the file. Returns the fixed entry, or None
+    when the import is already present.
+    """
+    with open(path, encoding="utf-8") as handle:
+        src = handle.read()
+    tree = ast.parse(src)
+    if imports_autopkglib(tree):
+        return None
+
+    last_import = None
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            last_import = node
+    docstring_end = None
+    if (
+        tree.body
+        and isinstance(tree.body[0], ast.Expr)
+        and isinstance(tree.body[0].value, ast.Constant)
+        and isinstance(tree.body[0].value.value, str)
+    ):
+        docstring_end = tree.body[0].end_lineno
+
+    import_line = "from autopkglib import Processor, ProcessorError"
+    lines = src.split("\n")
+    if last_import is not None:
+        insert_at = last_import.end_lineno or last_import.lineno
+        lines[insert_at:insert_at] = [import_line]
+        reported = insert_at + 1
+    elif docstring_end is not None:
+        lines[docstring_end:docstring_end] = ["", import_line]
+        reported = docstring_end + 2
+    else:
+        lines[0:0] = [import_line, ""]
+        reported = 1
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+    return (reported, "E031", f"added `{import_line}`")
+
+
+def maybe_fix_create_class(path, stem):
+    """Auto-fix E010 (no class found): append a minimal processor class stub.
+
+    The class is named after the file's basename and is a complete, valid
+    processor skeleton, so the re-analysis pass can chain the remaining fixes
+    (E003 `__all__`, E006 `__main__` guard). The empty input/output_variables get
+    an example comment above them so the author knows the shape to fill in.
+    Returns the fixed entry, or None when the basename is not a valid Python
+    identifier (so it stays reported).
+    """
+    if not stem.isidentifier():
+        return None
+    with open(path, encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+    while lines and lines[-1].strip() == "":
+        lines.pop()
+    class_line = len(lines) + 3  # after the two blank separator lines
+    lines += [
+        "",
+        "",
+        f"class {stem}(Processor):",
+        f'    """{stem} processor."""',
+        "",
+        "    description = __doc__",
+    ]
+    lines += variable_example_lines("input", "    ")
+    lines += variable_example_lines("output", "    ")
+    lines += [
+        "",
+        "    def main(self):",
+        '        """Execution starts here."""',
+    ]
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")
+    return (class_line, "E010", f"created processor class `{stem}`")
+
+
+def maybe_fix_main_guard(path, proc, info):
+    """Auto-fix E006/E007: ensure the canonical `__main__` guard exists.
+
+    Adds the guard when missing (E006) or rewrites a non-canonical one (E007).
+    The W003 "not at end" condition is a warning only and is never auto-fixed.
+    Returns the list of fixed entries (empty if nothing was fixed).
+    """
+    if info.main_guard is None:
+        line = apply_main_guard_fix(path, info, proc.name)
+        return [(line, "E006", f"added canonical `__main__` guard for {proc.name}")]
+    if not guard_is_canonical(info.main_guard, proc.name):
+        line = apply_main_guard_fix(path, info, proc.name)
+        return [(line, "E007", "normalized `__main__` guard to canonical form")]
+    return []
+
+
+def test_recipe_stub_text(stem, processor_ref):
+    """Return the YAML for a minimal test recipe that calls the processor."""
+    return (
+        "---\n"
+        f"Description: Test {stem} Processor\n"
+        f"Identifier: {RECIPE_IDENTIFIER_PREFIX}test.{stem}\n"
+        "Input:\n"
+        f"  NAME: {stem}Test\n"
+        f'MinimumVersion: "{TEST_RECIPE_MIN_VERSION}"\n'
+        "Process:\n"
+        f"  - Processor: {processor_ref}\n"
+    )
+
+
+def maybe_fix_test_recipe(path, stem):
+    """Auto-fix W005: create a stub test recipe in a sibling *test* folder.
+
+    Acts only when the processor has no test recipe yet AND a sibling folder whose
+    name contains "test" (e.g. Test-Recipes/, preferred when present) exists to
+    hold it -- with no such folder there is nowhere to put it, so W005 stays
+    reported. Writes `<stem>.test.recipe.yaml` calling the processor via
+    `com.github.jgstew.<Folder>/<stem>`, so the next run finds it and W005 no
+    longer fires. Never overwrites an existing file. Returns the list of fixed
+    entries (empty if not applicable).
+    """
+    if not check_test_recipe(path, stem):
+        return []  # a test recipe already exists
+
+    test_dirs = sibling_test_dirs(path)
+    if not test_dirs:
+        return []  # no Test-Recipes/-style folder to create it in
+    target_dir = next(
+        (d for d in test_dirs if os.path.basename(d) == "Test-Recipes"), test_dirs[0]
+    )
+
+    recipe_path = os.path.join(target_dir, f"{stem}.test.recipe.yaml")
+    if os.path.exists(recipe_path):
+        return []  # do not overwrite
+
+    # the processor is referenced as com.github.jgstew.<parent folder>/<Name>
+    parent_folder = os.path.basename(os.path.dirname(os.path.abspath(path)))
+    processor_ref = f"{RECIPE_IDENTIFIER_PREFIX}{parent_folder}/{stem}"
+    with open(recipe_path, "w", encoding="utf-8") as handle:
+        handle.write(test_recipe_stub_text(stem, processor_ref))
+
+    return [
+        (
+            1,
+            "W005",
+            f"created stub test recipe {os.path.relpath(recipe_path)} "
+            f"calling {stem} (fill in real Input/Process assertions)",
+        )
+    ]
+
+
+def processor_ref_for(path, stem):
+    """Return the `com.github.jgstew.<parent folder>/<stem>` reference for a file."""
+    parent_folder = os.path.basename(os.path.dirname(os.path.abspath(path)))
+    return f"{RECIPE_IDENTIFIER_PREFIX}{parent_folder}/{stem}"
+
+
+def schema_enum_values():
+    """Return the set of Processor `enum` values in the recipe schema, or None.
+
+    Reads SCHEMA_PATH and unions every `enum` list under
+    `definitions.Process.properties.Processor.anyOf`. Returns None when the schema
+    is missing or unparsable (W009 then does not fire).
+    """
+    try:
+        with open(SCHEMA_PATH, encoding="utf-8") as handle:
+            schema = json.load(handle)
+    except (OSError, ValueError):
+        return None
+    try:
+        blocks = schema["definitions"]["Process"]["properties"]["Processor"]["anyOf"]
+    except (KeyError, TypeError):
+        return None
+    values = set()
+    for block in blocks:
+        if isinstance(block, dict) and isinstance(block.get("enum"), list):
+            values.update(v for v in block["enum"] if isinstance(v, str))
+    return values
+
+
+def check_schema_enum(path, stem, src):
+    """W009: this processor should be listed in the recipe schema Processor enum.
+
+    Keeps the schema's autocomplete/canonical processor list from drifting as
+    processors are added or renamed. Skipped when the schema is absent/unparsable
+    or the file carries the `# schema-enum-ok` marker. Not something macadmin or
+    the schema itself can check (the schema's fallback pattern accepts anything).
+    """
+    if SCHEMA_ENUM_MARKER in src:
+        return []
+    values = schema_enum_values()
+    if values is None:
+        return []
+    ref = processor_ref_for(path, stem)
+    if ref in values:
+        return []
+    return [
+        (
+            1,
+            "W009",
+            f"processor `{ref}` is not listed in {SCHEMA_PATH}'s Processor enum; "
+            f"add it (or `# {SCHEMA_ENUM_MARKER}` if intentionally excluded)",
+        )
+    ]
+
+
+def maybe_fix_schema_enum(path, stem):
+    """Auto-fix W009: append this processor's reference to the schema enum block.
+
+    Appends to the existing `com.github.jgstew.*` enum block (fixing up the
+    trailing comma), leaving every other entry untouched -- a minimal, no-reorder
+    edit. Acts only when the schema is present, the ref is absent, and the jgstew
+    enum entries form a contiguous run (as they do in this schema). Returns the
+    list of fixed entries (empty if not applicable).
+    """
+    values = schema_enum_values()
+    if values is None:
+        return []
+    ref = processor_ref_for(path, stem)
+    if ref in values:
+        return []
+
+    with open(SCHEMA_PATH, encoding="utf-8") as handle:
+        lines = handle.read().split("\n")
+
+    # find the contiguous run of `"com.github.jgstew...."` enum entry lines
+    entry_re = re.compile(
+        r'^(\s*)"(' + re.escape(RECIPE_IDENTIFIER_PREFIX) + r'[^"]+)"(,?)\s*$'
+    )
+    hits = [(i, m) for i, line in enumerate(lines) for m in [entry_re.match(line)] if m]
+    if not hits:
+        return []
+    indices = [i for i, _ in hits]
+    if indices != list(range(indices[0], indices[-1] + 1)):
+        return []  # not contiguous -> leave for a human
+
+    indent = hits[0][1].group(1)
+    last_idx = indices[-1]
+    # ensure the previously-last entry ends with a comma, then append the new one
+    lines[last_idx] = f'{indent}"{hits[-1][1].group(2)}",'
+    lines.insert(last_idx + 1, f'{indent}"{ref}"')
+
+    with open(SCHEMA_PATH, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(lines))
+    return [
+        (
+            1,
+            "W009",
+            f"added `{ref}` to {SCHEMA_PATH}'s Processor enum",
+        )
+    ]
+
+
+def check_file(path, auto_fix=True, disabled=frozenset()):
+    """Check one file.
+
+    Returns (issues, fixed), each a list of (lineno, check_id, message). When
+    auto_fix is True, fixable issues (E001, E002, and E012+E013 together) are
+    corrected in place and reported under `fixed` instead of `issues`.
+
+    `disabled` is a set of check IDs (e.g. {"E005", "E020"}) to skip entirely.
+    A disabled fixable check is neither auto-fixed (the file is not mutated) nor
+    reported; reporting of disabled codes is filtered out by check_files().
+
+    The body is just orchestration: run/apply the auto-fixes (which mutate the
+    file and re-parse), then concatenate the results of the pure check_* helpers.
+    """
+    fixed = []
+    stem = os.path.splitext(os.path.basename(path))[0]
+
+    # --- W002: a path that does not exist (or is not a file) is skipped with a
+    # warning rather than crashing -- pre-commit may pass a just-deleted file ---
+    if not os.path.isfile(path):
+        return [(1, "W002", "file not found; skipping")], fixed
+
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        src = handle.read()
+
+    if SKIP_MARKER in src:
+        return [], fixed
+
+    try:
+        tree = ast.parse(src)
+    except SyntaxError as err:
+        return [(err.lineno or 1, "E000", f"syntax error: {err.msg}")], fixed
+
+    # --- W001: only AutoPkg processors are subject to these conventions ---
+    # A .py file that doesn't import autopkglib is not a processor (a helper
+    # script, shared util, etc.). Warn and skip rather than flag it with dozens
+    # of irrelevant violations. W001 is a warning: it does not fail the hook.
+    # Exceptions still treated as processors: a file that already subclasses a
+    # known base, and a small new-processor stub in a *Processor* folder -- both
+    # get built out / flagged instead of skipped (see is_new_processor_stub).
+    if (
+        not imports_autopkglib(tree)
+        and not has_processor_subclass(tree)
+        and not is_new_processor_stub(path, src)
+    ):
+        return [
+            (
+                1,
+                "W001",
+                "no `autopkglib` import found; skipping (not an AutoPkg processor)",
+            )
+        ], fixed
+
+    issues = []
+
+    # --- E001: shebang (auto-fixable) ---
+    lines = src.splitlines()
+    if not lines or lines[0].rstrip() != EXPECTED_SHEBANG:
+        if auto_fix and "E001" not in disabled:
+            apply_shebang_fix(path)
+            fixed.append((1, "E001", f"set first line to `{EXPECTED_SHEBANG}`"))
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                src = handle.read()
+            tree = ast.parse(src)
+        else:
+            issues.append((1, "E001", f"first line should be `{EXPECTED_SHEBANG}`"))
+
+    # --- E002: module docstring (auto-fixable when completely missing) ---
+    if auto_fix and "E002" not in disabled:
+        fixed_entry, new_src = maybe_fix_module_docstring(path, tree, stem)
+        if fixed_entry:
+            fixed.append(fixed_entry)
+            src = new_src  # keep src in sync so later line-based checks align
+            tree = ast.parse(new_src)
+    issues += check_module_docstring(tree)
+
+    # --- E025: author/created header comment between shebang and docstring ---
+    # Needs both a shebang and a module docstring to be present (E001/E002 add
+    # those first). The auto-fix stamps the file's original git author + year, or
+    # the current user + year for a brand-new/untracked file.
+    doc_lineno = module_docstring_lineno(tree)
+    lines = src.splitlines()
+    if (
+        "E025" not in disabled
+        and doc_lineno is not None
+        and lines
+        and lines[0].rstrip() == EXPECTED_SHEBANG
+        and not has_header_comment(lines, doc_lineno)
+    ):
+        if auto_fix:
+            author, year = git_created_by(path)
+            apply_header_comment_fix(path, author, year)
+            fixed.append((2, "E025", f"added `# Created {year} by {author}`"))
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                src = handle.read()
+            tree = ast.parse(src)
+        else:
+            issues.append(
+                (
+                    2,
+                    "E025",
+                    "missing author/created comment between the shebang and the module docstring",
+                )
+            )
+
+    # --- E031: a processor must import from autopkglib. A new stub may not yet;
+    # add the import now that the shebang/header/docstring are in place, and
+    # before the E010 class stub (which references Processor) is created. This
+    # turns the stub into a real, self-identifying processor. Re-analyze so the
+    # remaining fixes chain against the updated file. ---
+    if auto_fix and "E031" not in disabled and not imports_autopkglib(tree):
+        import_fixed = maybe_fix_autopkglib_import(path)
+        if import_fixed:
+            fixed.append(import_fixed)
+            more_issues, more_fixed = check_file(
+                path, auto_fix=auto_fix, disabled=disabled
+            )
+            return more_issues, fixed + more_fixed
+
+    # --- module-level checks ---
+    source_lines = src.splitlines()
+    info = scan_module(tree)
+    issues += check_all_declared(info)  # E003
+    issues += check_all_defined(tree, info)  # E026
+    issues += check_processor_error_import(info)  # E005
+    issues += check_autopkglib_import(tree)  # E031
+    # W005: create a stub test recipe in a sibling *test* folder when missing.
+    # The fix writes a separate .yaml (not this .py), so no re-parse is needed;
+    # the check right after then finds it and does not re-report.
+    if auto_fix and "W005" not in disabled:
+        fixed += maybe_fix_test_recipe(path, stem)
+    issues += check_test_recipe(path, stem)  # W005
+    issues += check_platform_imports(tree, source_lines)  # W006
+    issues += check_hardcoded_paths(tree, source_lines)  # W008
+    # W009: keep the recipe schema's Processor enum in sync. Like W005, the fix
+    # edits a separate file (the schema .json), so no .py re-parse is needed; the
+    # check right after then finds the entry and does not re-report.
+    if auto_fix and "W009" not in disabled:
+        fixed += maybe_fix_schema_enum(path, stem)
+    issues += check_schema_enum(path, stem, src)  # W009
+
+    proc = pick_processor_class(info, stem)
+    if proc is None:
+        # E010 (no class): auto-fixable by creating a stub class named for the
+        # file; the re-analysis then chains the remaining fixes (E003, E006, ...).
+        if auto_fix and "E010" not in disabled:
+            class_fixed = maybe_fix_create_class(path, stem)
+            if class_fixed:
+                fixed.append(class_fixed)
+                more_issues, more_fixed = check_file(
+                    path, auto_fix=auto_fix, disabled=disabled
+                )
+                return more_issues, fixed + more_fixed
+        issues.append((1, "E010", "no class found in this processor file"))
+        return sorted(issues), fixed
+
+    # --- class-level auto-fixes; the first one that applies re-analyzes the
+    # now-fixed file, which lets fixes chain (e.g. E012/E013 then E023). A fixer
+    # is skipped (no mutation) when any code it would emit is disabled. ---
+    if auto_fix:
+        for fixer, codes in (
+            (maybe_fix_all_declaration, {"E003"}),
+            (maybe_fix_class_docstring, {"E012", "E013"}),
+            (maybe_fix_redundant_doc_assign, {"E023"}),
+            (maybe_fix_main_guard, {"E006", "E007"}),
+            (maybe_fix_print, {"E028"}),
+            (maybe_fix_inputs_declared, {"E030"}),
+        ):
+            if codes & disabled:
+                continue
+            class_fixed = fixer(path, proc, info)
+            if class_fixed:
+                fixed += class_fixed
+                more_issues, more_fixed = check_file(
+                    path, auto_fix=auto_fix, disabled=disabled
+                )
+                return more_issues, fixed + more_fixed
+
+    # --- class-level checks ---
+    attrs, main_func = class_members(proc)
+    issues += check_class_naming(proc, stem, info)  # E010 / E011
+    issues += check_class_name_camelcase(proc, source_lines)  # E032
+    issues += check_base_class(proc, info)  # E004
+    issues += check_class_docstring(proc)  # E012
+    issues += check_class_docstring_sufficient(proc)  # E024
+    if "E033" not in disabled and DUPLICATE_DOCSTRING_MARKER not in src:
+        issues += check_duplicate_class_docstring(proc, path)  # E033
+    issues += check_description(proc, attrs)  # E013
+    issues += check_variable_attrs(proc, attrs)  # E014-E017
+    issues += check_input_variable_entries(attrs)  # E020 / E021
+    issues += check_output_variable_entries(attrs)  # E022
+    issues += check_variable_name_style(attrs, source_lines)  # W010
+    issues += check_main_method(proc, main_func)  # E018 / E019
+    issues += check_redundant_doc_assign(proc)  # E023
+    issues += check_main_guard(proc, info)  # E006 / E007 / W003
+    issues += check_no_print(proc)  # E028
+    issues += check_outputs_assigned(proc, attrs)  # E029
+    issues += check_inputs_declared(proc, attrs)  # E030
+    issues += check_inputs_read(proc, attrs, source_lines)  # W007
+    issues += check_outputs_declared(proc, attrs, source_lines)  # W004
+
+    return sorted(issues), fixed
+
+
+def check_files(paths, auto_fix=True, disabled=frozenset()):
+    """Check several files and return a list of (path, issues, fixed) tuples.
+
+    Only `.py` paths are checked; anything else is skipped. `disabled` is a set
+    of check IDs to skip entirely -- disabled codes are filtered out of both the
+    issues and fixed lists here, and check_file() avoids mutating files for
+    disabled fixable checks. This is the programmatic entry point: it does no
+    printing, so other Python code can call it and consume the structured
+    results directly. `main()` wraps it to print and to compute an exit code.
+    """
+    results = []
+    for path in paths:
+        if not path.endswith(".py"):
+            continue
+        issues, fixed = check_file(path, auto_fix=auto_fix, disabled=disabled)
+        issues = [item for item in issues if item[1] not in disabled]
+        fixed = [item for item in fixed if item[1] not in disabled]
+        results.append((path, issues, fixed))
+    return results
+
+
+def has_processor_subclass(tree):
+    """True if the module defines a top-level class subclassing a known base.
+
+    Lets a file that clearly intends to be a processor (e.g. `class X(Processor)`)
+    be validated even if the autopkglib import is missing, so E004/E005/E031 can
+    report it (and a half-built stub keeps being built out on re-analysis).
+    """
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and set(base_names(node)) & KNOWN_BASES:
+            return True
+    return False
+
+
+def in_processor_folder(path):
+    """True if the file's immediate parent folder name contains "processor".
+
+    Case-insensitive, matching SharedProcessors, SharedDangerousProcessors, etc.
+    """
+    parent = os.path.basename(os.path.dirname(os.path.abspath(path)))
+    return PROCESSOR_FOLDER_HINT in parent.lower()
+
+
+def is_new_processor_stub(path, src=None):
+    """True if `path` is a small stub in a *Processor* folder meant to be built out.
+
+    A brand-new, nearly-empty .py file in a folder whose name contains "processor"
+    is taken to be a new processor a developer just started: it is validated and
+    auto-fixed into a real processor rather than skipped as a non-processor.
+    Dunder files (e.g. __init__.py) and files with the skip marker never qualify.
+    `src` may be passed to avoid re-reading a file already in hand.
+    """
+    if not in_processor_folder(path):
+        return False
+    if os.path.basename(path).startswith("__"):
+        return False
+    if src is None:
+        try:
+            with open(path, encoding="utf-8", errors="replace") as handle:
+                src = handle.read()
+        except OSError:
+            return False
+    if SKIP_MARKER in src:
+        return False
+    non_blank = [line for line in src.splitlines() if line.strip()]
+    return len(non_blank) <= STUB_MAX_LINES
+
+
+def looks_like_processor(path):
+    """True if a .py file appears to be an AutoPkg processor.
+
+    A processor either imports autopkglib, already subclasses a known processor
+    base, or is a small new-processor stub in a *Processor* folder (see
+    is_new_processor_stub). Discovery uses this so plain scripts, helpers, and
+    tests are silently skipped while stubs are picked up and built out. Uses the
+    AST when the file parses; falls back to a text check so a processor with a
+    syntax error is still picked up (and reported as E000).
+    """
+    try:
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            src = handle.read()
+    except OSError:
+        return False
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return "autopkglib" in src or is_new_processor_stub(path, src)
+    return (
+        imports_autopkglib(tree)
+        or has_processor_subclass(tree)
+        or is_new_processor_stub(path, src)
+    )
+
+
+def discover_processor_files(root=".", max_depth=3):
+    """Return .py files under `root` that look like AutoPkg processors.
+
+    Descends at most `max_depth` subfolders deep (root itself is depth 0). Hidden
+    directories and common noise (__pycache__, node_modules) are pruned. Only
+    files that look like processors are returned (including new-processor stubs in
+    *Processor* folders); other .py files are ignored.
+    """
+    skip_dirs = {"__pycache__", "node_modules"}
+    root = os.path.normpath(root)
+    found = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel = os.path.relpath(dirpath, root)
+        depth = 0 if rel == os.curdir else rel.count(os.sep) + 1
+        dirnames[:] = [
+            d for d in dirnames if not d.startswith(".") and d not in skip_dirs
+        ]
+        if depth >= max_depth:
+            dirnames[:] = []  # do not descend past max_depth
+        for name in filenames:
+            if name.endswith(".py"):
+                path = os.path.join(dirpath, name)
+                if looks_like_processor(path):
+                    found.append(path)
+    return sorted(found)
+
+
+def main(argv=None):
+    """Execution starts here.
+
+    argv defaults to None so this works both as a console_scripts entry point
+    (pre-commit calls it with no arguments; argparse then reads sys.argv) and
+    when called directly as `main(sys.argv[1:])`.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--auto-fix",
+        choices=["yes", "no"],
+        default=None,
+        help="automatically fix fixable issues in place (default: yes when files "
+        "are given, no when auto-discovering)",
+    )
+    parser.add_argument(
+        "--disable",
+        default="",
+        metavar="CODES",
+        help="comma-separated check IDs to skip entirely, e.g. --disable E005,E020",
+    )
+    parser.add_argument(
+        "files",
+        nargs="*",
+        help="processor .py files to check; if omitted, all processor-looking .py "
+        "files in the current folder and up to 3 subfolders deep are checked",
+    )
+    args = parser.parse_args(argv)
+
+    disabled = {
+        code.strip().upper() for code in args.disable.split(",") if code.strip()
+    }
+    unknown = disabled - KNOWN_CODES
+    if unknown:
+        print(
+            f"warning: ignoring unknown --disable code(s): {', '.join(sorted(unknown))}"
+        )
+
+    # No files given -> discover processor-looking .py files (<= 3 subfolders deep).
+    discovering = not args.files
+    paths = args.files if args.files else discover_processor_files(".", max_depth=3)
+
+    # auto-fix defaults to yes for explicit files, no when auto-discovering; an
+    # explicit --auto-fix always wins.
+    if args.auto_fix is not None:
+        auto_fix = args.auto_fix == "yes"
+    else:
+        auto_fix = not discovering
+
+    issue_count = 0
+    fix_count = 0
+    warning_count = 0
+    for path, issues, fixed in check_files(paths, auto_fix=auto_fix, disabled=disabled):
+        for lineno, check_id, message in fixed:
+            fix_count += 1
+            print(f"{path}:{lineno}: [{check_id}] auto-fixed: {message}")
+        for lineno, check_id, message in issues:
+            # W-codes are advisory (e.g. "not a processor") and never fail the hook
+            if check_id.startswith("W"):
+                warning_count += 1
+                print(f"{path}:{lineno}: [{check_id}] warning: {message}")
+            else:
+                issue_count += 1
+                print(f"{path}:{lineno}: [{check_id}] {message}")
+
+    if fix_count:
+        print(f"\nauto-fixed {fix_count} issue(s); review and re-stage the changes.")
+    if warning_count:
+        print(f"{warning_count} file(s) skipped (see warnings above).")
+    if issue_count:
+        print(f"{issue_count} remaining processor-convention issue(s).")
+    # non-zero if anything was fixed (so the user re-stages) or any real issue
+    # remains; warnings alone do not fail the hook
+    return 1 if (issue_count or fix_count) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

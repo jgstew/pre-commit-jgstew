@@ -75,3 +75,61 @@
   pass_filenames: True
   types: [text]
   files: \.(yml|yaml)$
+- id: add-missing-docstrings
+  name: Add missing function docstrings
+  description: >
+    Inserts a boilerplate docstring into named functions (default: main) when
+    the docstring is absent or empty. Exits 1 and modifies the files so the
+    author can review, re-stage, and commit again.
+  language: python
+  pass_filenames: True
+  entry: add-missing-docstrings
+  types: [python]
+  args:
+    - "--functions=main"
+    - "--docstring=Execution starts here."
+- id: check-processor-conventions
+  name: Check AutoPkg processor conventions
+  description: >
+    Picky, opinionated checks for AutoPkg processor .py files (boilerplate,
+    docstrings, input/output_variables, __main__ guard, etc.). Auto-fixes the
+    fixable issues in place and can build out a new-processor stub; exits 1 when
+    anything was fixed or any issue remains so the author re-stages and commits
+    again. Non-processor files are skipped with a non-failing warning.
+  language: python
+  pass_filenames: True
+  entry: check-processor-conventions
+  types: [python]
+- id: check-recipe-conventions
+  name: Check AutoPkg recipe conventions
+  description: >
+    Picky, opinionated cross-field checks for AutoPkg recipe files (YAML or
+    plist) that a JSON schema cannot express: Identifier<->Input NAME,
+    ParentRecipe resolvability and cycles, duplicate Identifiers/Descriptions,
+    filename<->identifier type, MinimumVersion floor, Process-step blank-line
+    spacing, http/https, regex validity, and shared-processor references.
+    Auto-fixes the fixable ones in place and exits 1 when anything was fixed;
+    pass --strict to also fail on remaining warnings.
+  language: python
+  pass_filenames: True
+  entry: check-recipe-conventions
+  types: [text]
+  files: \.recipe(\.ya?ml)?$
+- id: check-bes-conventions
+  name: Check BigFix BES conventions
+  description: >
+    Picky, opinionated content checks + auto-fixes for BigFix BES files that the
+    BES.xsd schema (validate-bes) cannot express: ActionScript MIMEType is one of
+    the allowed set; SourceReleaseDate/x-fixlet-modification-time/DownloadSize/
+    action-ui-metadata/CPE-2.3 value formats; prefetch-line shape; CDATA usage;
+    blank-line spacing; description-placeholder; and Task/Fixlet release-date/
+    modification-time presence and download actions. Auto-fixes the fixable ones
+    in place (DownloadSize -> 0, missing dates -> now, blank-line collapse; and,
+    under --strict, CDATA wrapping) and exits 1 when anything was fixed.
+    Unparseable files are skipped (validate-bes owns validity). E-codes fail the
+    hook; pass --strict to also fail on warnings.
+  language: python
+  pass_filenames: True
+  entry: check-bes-conventions
+  types: [text]
+  files: \.bes$

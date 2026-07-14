@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: "Checkout source code"
-        uses: "actions/checkout@v4"
+        uses: "actions/checkout@v7"
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -33,7 +33,7 @@ jobs:
       # only make release if there is NOT a git tag for this version
       - name: "Check: package version has corresponding git tag"
         # this will prevent this from doing anything when run through ACT
-        if: ${{ !env.ACT }} && contains(steps.getversion.outputs.version, '.')
+        if: ${{ !env.ACT && contains(steps.getversion.outputs.version, '.') }}
         id: tagged
         shell: bash
         run: |

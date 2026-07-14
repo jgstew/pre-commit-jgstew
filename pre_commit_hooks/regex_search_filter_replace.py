@@ -49,45 +49,62 @@ def build_argument_parser():
     return parser
 
 
+def first_changed_line(before, after):
+    """Return the 1-based number of the first line that differs.
+
+    Used to print a clickable `path:line` reference. If the common prefix is
+    identical and the change is only an added/removed tail, the first line past
+    the shorter version is returned.
+    """
+    before_lines = before.splitlines()
+    after_lines = after.splitlines()
+    for lineno, (old, new) in enumerate(zip(before_lines, after_lines), start=1):
+        if old != new:
+            return lineno
+    return min(len(before_lines), len(after_lines)) + 1
+
+
 def main(argv=None):
-    """Main process."""
+    """Main process.
+
+    Apply the search/filter/replace to each file. A file is only rewritten when
+    its contents actually change; when that happens it is reported as `path:line`
+    (the first changed line, so editors/terminals can jump straight to it).
+    Returns the number of files that changed, so the hook exits non-zero -- and
+    pre-commit asks for a re-stage -- only when it actually modified something.
+    """
 
     # Parse command line arguments.
     argparser = build_argument_parser()
     args = argparser.parse_args(argv)
 
-    retval = 0
+    changed = 0
     for filename in args.filenames:
-        print(filename)
         with open(filename, "r") as f:
-            filetext = f.read()
-            # get matches of search RegEx
-            matches = re.findall(args.search, filetext)
+            original = f.read()
 
-        # print(matches)
-
-        for match in matches:
-            retval = retval + 1
+        # get matches of search RegEx
+        filetext = original
+        for match in re.findall(args.search, filetext):
             # get only the filtered part of the match
             filtered_match = re.findall(args.filter, match)[0]
-            # print(filtered_match)
             # replace the filtered part of the match with the replacement value
             replaced_match = match.replace(filtered_match, args.replace)
-            # print(replaced_match)
             # save result to file representation
             filetext = filetext.replace(match, replaced_match)
-            # print(filetext)
 
-        # if configured, overwrite the original file
-        if args.overwrite:
-            with open(filename, "w") as f:
-                f.write(filetext)
+        # only act when the content actually changed
+        if filetext != original:
+            changed = changed + 1
+            # report as path:line so the location is clickable
+            print(f"{filename}:{first_changed_line(original, filetext)}")
+            # if configured, overwrite the original file with the changes
+            if args.overwrite:
+                with open(filename, "w") as f:
+                    f.write(filetext)
 
-    return retval
+    return changed
 
 
 if __name__ == "__main__":
-    print(__name__)
-    exit_code = main()
-    print("Matches:", exit_code)
-    exit(exit_code)
+    exit(main())

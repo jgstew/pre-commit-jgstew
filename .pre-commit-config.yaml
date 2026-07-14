@@ -2,11 +2,12 @@
 # run on only items staged in git:  pre-commit
 # automatically run on commit:      pre-commit install
 # check all files in repo:          pre-commit run --all-files
+# check all files in repo:          pre-commit run --all-files --hook-stage manual
 # update all pre-commit hooks:      pre-commit autoupdate
 # https://github.com/pre-commit/pre-commit-hooks
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.3.0
+    rev: v6.0.0
     hooks:
       - id: check-yaml
       # - id: check-json
@@ -25,7 +26,7 @@ repos:
       #  args: [--markdown-linebreak-ext=md]
       - id: detect-private-key
   - repo: https://github.com/adrienverge/yamllint.git
-    rev: v1.27.1
+    rev: v1.38.0
     hooks:
       - id: yamllint
         args: [-c=.yamllint.yaml]
@@ -33,28 +34,44 @@ repos:
     rev: v5.10.1
     hooks:
       - id: isort
-  - repo: https://gitlab.com/pycqa/flake8
-    rev: 3.9.2
-    hooks:
-      - id: flake8
+  # - repo: https://gitlab.com/pycqa/flake8
+  #   rev: 3.9.2
+  #   hooks:
+  #     - id: flake8
   - repo: https://github.com/psf/black
-    rev: 22.6.0
+    rev: 26.5.1
     hooks:
       - id: black
   - repo: https://github.com/jgstew/pre-commit-jgstew
-    rev: v1.1.4
+    rev: v1.4.0
     hooks:
       - id: minimum-changes
         args: [--min-changes=0]
+      - id: verify-files-are-ascii
+
+  # - repo: https://github.com/christophmeissner/pytest-pre-commit
+  #   rev: 1.0.0
+  #   hooks:
+  #     - id: pytest
+  #       pass_filenames: false
+  #       always_run: true
+  #       stages: [manual]
+  #       additional_dependencies:
+  #         - validate_bes_xml
+
   # Local Hooks:
   # https://towardsdatascience.com/getting-started-with-python-pre-commit-hooks-28be2b2d09d5
-  # the following might not work everywhere due to using `python` instead of `python3`
+  # language: python -> pre-commit provisions an isolated venv, so bare `python`
+  # always resolves (no dependence on a system `python` shim). Third-party
+  # imports must be declared via additional_dependencies.
   - repo: local
     hooks:
       - id: validate-bes-local
         name: validate-bes-local
         entry: python pre_commit_hooks/validate_bes.py
-        language: system
+        language: python
+        # isolated venv: declare the third-party import used by validate_bes.py
+        additional_dependencies: [validate_bes_xml]
         pass_filenames: True
         files: \.(bes|ojo)$
   - repo: local
@@ -62,12 +79,12 @@ repos:
       - id: verify-files-contain-entry-local
         name: verify-files-contain-entry-local
         entry: python pre_commit_hooks/verify_files_contain_entry.py
-        language: system
+        language: python
         pass_filenames: True
         files: \.bes$
         args:
           [
-            "--ref-file=test/example.test_file",
+            "--ref-file=tests/examples/example.test_file",
             "--re-pattern=(?i)<Title>(.+)</Title>",
           ]
   - repo: local
@@ -75,7 +92,7 @@ repos:
       - id: verify-files-contain-pattern-local
         name: verify-files-contain-pattern-local
         entry: python pre_commit_hooks/verify_files_contain_pattern.py
-        language: system
+        language: python
         pass_filenames: True
         files: \.test_file$
         args: ["--re-pattern=(?i)Example"]
@@ -84,32 +101,32 @@ repos:
       - id: minimum-changes-local
         name: minimum-changes-local
         entry: python pre_commit_hooks/minimum_changes.py
-        language: system
+        language: python
         pass_filenames: True
-        args: [--min-changes=2, --auto-revert]
+        args: [--min-changes=2]
         files: .test_file
   - repo: local
     hooks:
       - id: git-clean
         name: git-clean-local
         entry: python pre_commit_hooks/git_clean.py
-        language: system
+        language: python
         files: .test_file
-  - repo: local
-    hooks:
-      - id: revert-missing-change
-        name: revert-missing-change-local
-        entry: python pre_commit_hooks/revert_missing_change.py
-        language: system
-        pass_filenames: True
-        args: ['--change_regex=v[0-9]+(\.[0-9]+)*\s*</Title>']
-        files: .test_file
+  # - repo: local
+  #   hooks:
+  #     - id: revert-missing-change
+  #       name: revert-missing-change-local
+  #       entry: python pre_commit_hooks/revert_missing_change.py
+  #       language: python
+  #       pass_filenames: True
+  #       args: ['--change_regex=v[0-9]+(\.[0-9]+)*\s*</Title>']
+  #       files: .test_file
   - repo: local
     hooks:
       - id: github-action-set-output-fix
         name: github-action-set-output-fix-local
         entry: python pre_commit_hooks/github_action_set_output_fix.py
-        language: system
+        language: python
         pass_filenames: True
         args: ['--overwrite']
         files: \.(yaml|yml)$
@@ -117,8 +134,28 @@ repos:
     hooks:
       - id: try-repo
         name: try-repo
-        entry: pre-commit try-repo . --files test/example.test_file test/example-test.bes
+        entry: pre-commit try-repo . --files tests/examples/example.test_file tests/examples/example-test.bes
         language: system
         pass_filenames: False
         require_serial: True
+        stages: [manual]
+  - repo: local
+    hooks:
+      - id: add-missing-docstrings
+        name: add-missing-docstrings
+        entry: python pre_commit_hooks/add_main_docstring.py
+        language: python
+        pass_filenames: True
+  - repo: local
+    hooks:
+      # This repo has no AutoPkg processors of its own, so this is a manual-stage
+      # smoke test (report-only). Downstream AutoPkg repos use the published
+      # `check-processor-conventions` hook; see README / jgstew-recipes.
+      - id: check-processor-conventions
+        name: check-processor-conventions-local
+        entry: python pre_commit_hooks/autopkg_processor_check_conventions.py
+        language: python
+        pass_filenames: True
+        args: ["--auto-fix=no"]
+        types: [python]
         stages: [manual]

@@ -9,10 +9,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out code.
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: misspell
         if: ${{ !env.ACT }}
-        uses: reviewdog/action-misspell@v1.26.3
+        uses: reviewdog/action-misspell@v1.27.0
         with:
           github_token: ${{ secrets.github_token }}
           locale: "US"
