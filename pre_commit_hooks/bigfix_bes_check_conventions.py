@@ -28,6 +28,8 @@ Checks:
     E207  a Description / Relevance / ActionScript entity-escapes a character
           (< > &) that requires <![CDATA[ ... ]]> instead (fixable -> unescaped
           and CDATA-wrapped)
+    E208  the file is not CRLF throughout -- BES files must use CRLF line
+          endings (fixable -> the whole file is normalized to CRLF)
     W200  the file is not parseable BES XML; skipped (advisory -- validate-bes
           is the authority on file validity)
     W201  a Task/Fixlet has no x-fixlet-modification-time MIMEField (fixable ->
@@ -62,7 +64,10 @@ x-fixlet-modification-time -> the moment the linter ran (W201); collapsed blank
 lines before </ActionScript> (W205); and a Description/Relevance/ActionScript
 that entity-escapes < > & is unescaped and CDATA-wrapped (E207). One fix is
 gated behind --strict: wrapping an otherwise-plain ActionScript body in
-<![CDATA[ ... ]]> (W204). --auto-fix defaults to yes when files are given
+<![CDATA[ ... ]]> (W204). Finally, CRLF normalization runs LAST: whenever
+--auto-fix is on, the whole file is rewritten with CRLF line endings (E208), so
+any fix -- and any file that was not already all-CRLF -- ends up entirely CRLF
+rather than preserving a mix. --auto-fix defaults to yes when files are given
 explicitly, but to no when auto-discovering, so a bare run is read-only. An
 auto-fixed file fails the hook so the change is reviewed and re-staged.
 
@@ -250,6 +255,7 @@ KNOWN_CODES = frozenset(
         "E205",  # x-fixlet-cpe23-item-name not a valid CPE 2.3 string
         "E206",  # action-ui-metadata not well-formed
         "E207",  # entity-escaped special chars where CDATA is required
+        "E208",  # file is not entirely CRLF-terminated
         "W200",  # not parseable BES XML; skipped
         "W201",  # Task/Fixlet missing x-fixlet-modification-time
         "W202",  # Task/Fixlet missing SourceReleaseDate
@@ -279,6 +285,20 @@ def _modtime_str(now=None):
 def _lineno(src, pos):
     """Return the 1-based line number of character offset `pos` in `src`."""
     return src.count("\n", 0, pos) + 1
+
+
+def _is_all_crlf(raw):
+    """True if the raw bytes use CRLF throughout (no lone LF and no lone CR).
+
+    A file with no line breaks at all is trivially CRLF-consistent.
+    """
+    crlf = raw.count(b"\r\n")
+    return raw.count(b"\n") == crlf and raw.count(b"\r") == crlf
+
+
+def _to_crlf(text):
+    """Return `text` with every line ending normalized to CRLF."""
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
 
 
 def _strip_cdata(text):
@@ -937,14 +957,20 @@ def check_file(path, disabled=frozenset(), strict=False, auto_fix=False, now=Non
 
     When `auto_fix` is set, the fixable conventions are rewritten in place and
     reported under `fixed`; the CDATA wrap (W204) is applied only when `strict`
-    is also set. The file is then re-read so the checks below do not re-report
-    what was just fixed.
+    is also set, and CRLF normalization (E208) is applied last so the written
+    file is entirely CRLF. Read-only, a file that is not all-CRLF is an E208
+    error. The file is read as raw bytes and normalized to LF in memory so the
+    checks are line-ending agnostic.
     """
     if not os.path.isfile(path):
         return [(1, "W200", "file not found; skipping")], []
 
-    with open(path, encoding="utf-8", errors="replace") as handle:
-        src = handle.read()
+    raw = open(path, "rb").read()
+    # normalize to LF in memory so the checks/fixers are line-ending agnostic;
+    # `raw` is kept to inspect (and, on auto-fix, rewrite) the real endings.
+    src = (
+        raw.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+    )
 
     if SKIP_MARKER in src:
         return [], []
@@ -956,21 +982,43 @@ def check_file(path, disabled=frozenset(), strict=False, auto_fix=False, now=Non
     except ElementTree.ParseError as err:
         return [(1, "W200", f"not parseable BES XML ({err}); skipping")], []
 
+    check_e208 = "E208" not in disabled
+    crlf_ok = _is_all_crlf(raw)
+
     fixed = []
     if auto_fix:
         new_src, fixed = _autofix(src, root, disabled, strict, now)
-        if new_src != src:
-            with open(path, "w", encoding="utf-8") as handle:
-                handle.write(new_src)
-            src = new_src
-            try:
-                root = ElementTree.fromstring(src)
-            except ElementTree.ParseError as err:
-                return [
-                    (1, "W200", f"not parseable BES XML after fixes ({err})")
-                ], fixed
+        # CRLF normalization runs LAST: BES files must be entirely CRLF, so any
+        # auto-fix leaves the whole file CRLF (rather than preserving endings).
+        # If the CRLF rule is disabled, write whatever endings resulted (LF).
+        if check_e208:
+            final_bytes = _to_crlf(new_src).encode("utf-8")
+            if not crlf_ok:
+                fixed.append((1, "E208", "normalized line endings to CRLF"))
+        else:
+            final_bytes = new_src.encode("utf-8")
+        if final_bytes != raw:
+            with open(path, "wb") as handle:
+                handle.write(final_bytes)
+        src = new_src
+        try:
+            root = ElementTree.fromstring(src)
+        except ElementTree.ParseError as err:
+            return [(1, "W200", f"not parseable BES XML after fixes ({err})")], fixed
 
-    return _run_checks(src, root, disabled), fixed
+    issues = _run_checks(src, root, disabled)
+    if not auto_fix and check_e208 and not crlf_ok:
+        lone_lf = raw.count(b"\n") - raw.count(b"\r\n")
+        lone_cr = raw.count(b"\r") - raw.count(b"\r\n")
+        issues.append(
+            (
+                1,
+                "E208",
+                f"BES file must use CRLF line endings throughout (found {lone_lf} "
+                f"lone LF, {lone_cr} lone CR); enable --auto-fix to normalize",
+            )
+        )
+    return sorted(issues), fixed
 
 
 def is_bes_file(path):

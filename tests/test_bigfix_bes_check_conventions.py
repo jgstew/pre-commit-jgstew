@@ -73,9 +73,14 @@ def task(
 
 
 def write(tmp_path, name, content):
-    """Write `content` to tmp_path/name; return the path as a str."""
+    """Write `content` to tmp_path/name with CRLF endings; return the path str.
+
+    BES files must be CRLF (E208), so fixtures are written CRLF by default;
+    tests that exercise line endings write raw bytes via write_bytes directly.
+    """
     path = tmp_path / name
-    path.write_text(content, encoding="utf-8")
+    crlf = content.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
+    path.write_bytes(crlf.encode("utf-8"))
     return str(path)
 
 
@@ -523,6 +528,74 @@ def test_autofix_scopes_marker_per_object(tmp_path):
     assert out.count("<SourceReleaseDate>") == 1
     assert out.count("x-fixlet-modification-time") == 1
     assert {code for _, code, _ in fixed} == {"W201", "W202"}
+
+
+# --- E208 CRLF line endings ------------------------------------------------
+
+
+def test_crlf_file_is_clean(tmp_path):
+    # write() already writes CRLF, so a good task has no E208
+    assert "E208" not in codes(tmp_path, task())
+
+
+def test_lf_file_flagged(tmp_path):
+    path = tmp_path / "lf.bes"
+    lf = task().replace("\r\n", "\n").replace("\r", "\n")  # force pure LF
+    path.write_bytes(lf.encode("utf-8"))
+    issues, _ = checker.check_file(str(path))
+    assert "E208" in {code for _, code, _ in issues}
+
+
+def test_mixed_endings_flagged(tmp_path):
+    path = tmp_path / "mixed.bes"
+    body = task()
+    lf = body.replace("\r\n", "\n").replace("\r", "\n")
+    # make only the first newline a CRLF, rest LF -> mixed
+    mixed = lf.replace("\n", "\r\n", 1)
+    path.write_bytes(mixed.encode("utf-8"))
+    issues, _ = checker.check_file(str(path))
+    assert "E208" in {code for _, code, _ in issues}
+
+
+def test_autofix_normalizes_to_crlf(tmp_path):
+    path = tmp_path / "lf.bes"
+    lf = task().replace("\r\n", "\n").replace("\r", "\n")
+    path.write_bytes(lf.encode("utf-8"))
+    _, fixed = checker.check_file(str(path), auto_fix=True, now=FIXED_NOW)
+    out = path.read_bytes()
+    assert out.count(b"\n") == out.count(b"\r\n")  # every LF is part of a CRLF
+    assert b"\r\n" in out
+    assert any(code == "E208" for _, code, _ in fixed)
+
+
+def test_autofix_makes_whole_file_crlf_after_content_fix(tmp_path):
+    # an LF file that also needs a content fix ends up entirely CRLF
+    path = tmp_path / "lf2.bes"
+    lf = task(download_size="").replace("\r\n", "\n").replace("\r", "\n")
+    path.write_bytes(lf.encode("utf-8"))
+    _, fixed = checker.check_file(str(path), auto_fix=True, now=FIXED_NOW)
+    out = path.read_bytes()
+    assert out.count(b"\n") == out.count(b"\r\n")
+    assert b"<DownloadSize>0</DownloadSize>" in out
+    assert {"E203", "E208"} <= {code for _, code, _ in fixed}
+
+
+def test_already_crlf_autofix_is_noop(tmp_path):
+    path = tmp_path / "crlf.bes"
+    crlf = task().replace("\r\n", "\n").replace("\n", "\r\n")
+    before = crlf.encode("utf-8")
+    path.write_bytes(before)
+    _, fixed = checker.check_file(str(path), auto_fix=True, now=FIXED_NOW)
+    assert path.read_bytes() == before  # unchanged
+    assert not any(code == "E208" for _, code, _ in fixed)
+
+
+def test_disable_e208_skips(tmp_path):
+    path = tmp_path / "lf.bes"
+    lf = task().replace("\r\n", "\n").replace("\r", "\n")
+    path.write_bytes(lf.encode("utf-8"))
+    issues, _ = checker.check_file(str(path), disabled={"E208"})
+    assert "E208" not in {code for _, code, _ in issues}
 
 
 # --- skips ----------------------------------------------------------------
