@@ -3,6 +3,8 @@ name: test_build
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "**.py"
       - "setup.cfg"

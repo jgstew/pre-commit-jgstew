@@ -3,6 +3,8 @@ name: yamllint
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "**.yaml"
       - "**.yml"

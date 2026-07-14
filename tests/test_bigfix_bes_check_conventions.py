@@ -455,6 +455,76 @@ def test_analysis_exempt_from_presence(tmp_path):
     assert codes(tmp_path, analysis) == []
 
 
+# --- multiple content objects treated as independent entities -------------
+
+
+def two_objects(first, second):
+    """Wrap two content-object blocks (each without the <?xml>/<BES> shell)."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<BES xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '
+        'xsi:noNamespaceSchemaLocation="BES.xsd">\n'
+        f"{first}\n{second}\n</BES>\n"
+    )
+
+
+def _inner(content):
+    """Return just the <Task>...</Task> block from a task() document."""
+    return content[
+        content.index("\t<Task>") : content.index("</Task>") + len("</Task>")
+    ]
+
+
+def test_fault_in_one_object_fails_whole_file(tmp_path):
+    # a clean Fixlet next to a Task with a bad MIMEType -> E200 still raised
+    clean = _inner(task()).replace("<Task>", "<Fixlet>").replace("</Task>", "</Fixlet>")
+    bad = _inner(task(mimetype="application/x-python"))
+    assert "E200" in codes(tmp_path, two_objects(clean, bad))
+
+
+def test_each_object_flagged_separately(tmp_path):
+    # first object: bad date; second object: bad mimetype -> both codes present
+    a = _inner(task(srd="07/14/2026"))
+    b = _inner(task(mimetype="application/x-python"))
+    assert set(codes(tmp_path, two_objects(a, b))) >= {"E200", "E201"}
+
+
+def test_marker_in_one_object_does_not_leak_to_sibling(tmp_path):
+    # Task A opts out of the date check inside its own block; Task B still flagged
+    a = _inner(task(srd=None)).replace(
+        "<Title>Example</Title>",
+        "<Title>A</Title>\n\t\t<!-- source-release-date-ok -->",
+    )
+    b = _inner(task(srd=None)).replace("<Title>Example</Title>", "<Title>B</Title>")
+    got = codes(tmp_path, two_objects(a, b))
+    assert "W202" in got  # Task B is still flagged
+
+
+def test_marker_outside_all_objects_is_file_level(tmp_path):
+    a = _inner(task(srd=None))
+    b = _inner(task(srd=None))
+    doc = two_objects(a, b).replace(
+        "<BES ", "<!-- source-release-date-ok -->\n<BES ", 1
+    )
+    assert "W202" not in codes(tmp_path, doc)
+
+
+def test_autofix_scopes_marker_per_object(tmp_path):
+    # Task A opts out (keep it un-dated); Task B gets its dates inserted
+    a = _inner(task(srd=None, modtime=None)).replace(
+        "<Title>Example</Title>",
+        "<Title>A</Title>\n\t\t<!-- source-release-date-ok --><!-- modification-time-ok -->",
+    )
+    b = _inner(task(srd=None, modtime=None)).replace(
+        "<Title>Example</Title>", "<Title>B</Title>"
+    )
+    out, fixed = autofix(tmp_path, two_objects(a, b))
+    # exactly one SourceReleaseDate / modtime inserted (for B, not A)
+    assert out.count("<SourceReleaseDate>") == 1
+    assert out.count("x-fixlet-modification-time") == 1
+    assert {code for _, code, _ in fixed} == {"W201", "W202"}
+
+
 # --- skips ----------------------------------------------------------------
 
 

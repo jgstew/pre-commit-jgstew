@@ -3,6 +3,8 @@ name: flake8
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "**.py"
       - ".flake8"

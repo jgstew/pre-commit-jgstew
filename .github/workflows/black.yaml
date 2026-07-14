@@ -3,6 +3,8 @@ name: black
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "**.py"
       - "requirements.txt"

@@ -214,6 +214,11 @@ NAMED_MIMEFIELD_RE = re.compile(
 )
 CONTENT_OPEN_RE = re.compile(r"<(" + "|".join(sorted(CONTENT_TAGS)) + r")\b")
 CONTENT_BLOCK_RE = re.compile(r"(<(Task|Fixlet)\b[^>]*>)(.*?)(</\2>)", re.DOTALL)
+# a whole content object (open tag through matching close), used to split a <BES>
+# into the independent entities it contains so each is checked/fixed on its own.
+CONTENT_OBJECT_SPAN_RE = re.compile(
+    r"<(" + "|".join(sorted(CONTENT_TAGS)) + r")\b[^>]*>.*?</\1>", re.DOTALL
+)
 MUSTACHE_RE = re.compile(r"\{\{.*?\}\}", re.DOTALL)
 CDATA_RE = re.compile(r"^<!\[CDATA\[(.*)\]\]>$", re.DOTALL)
 # 2+ blank lines immediately before a </ActionScript> close (an optional CDATA
@@ -546,22 +551,39 @@ def check_prefetch_lines(src):
     return issues
 
 
-def _content_objects(root, src):
-    """Yield (tag, element, lineno) for each content object directly under <BES>."""
-    opens = [
-        (match.group(1), _lineno(src, match.start()))
-        for match in CONTENT_OPEN_RE.finditer(src)
+def _content_object_blocks(root, src):
+    """Return ordered [(start, end, element)] for the content objects in `src`.
+
+    The regex spans (in document order) are zipped with the ElementTree
+    content-tag children (same order) so each block carries its parsed element.
+    Each block is an independent entity: it is checked and fixed on its own, and
+    a marker only governs the block it sits in (see `_outside_text`).
+    """
+    spans = [(m.start(), m.end()) for m in CONTENT_OBJECT_SPAN_RE.finditer(src)]
+    children = [
+        child
+        for child in list(root)
+        if isinstance(child.tag, str) and child.tag in CONTENT_TAGS
     ]
-    index = 0
-    for child in list(root):
-        tag = child.tag if isinstance(child.tag, str) else None
-        if tag not in CONTENT_TAGS:
-            continue
-        lineno = 1
-        if index < len(opens) and opens[index][0] == tag:
-            lineno = opens[index][1]
-        index += 1
-        yield tag, child, lineno
+    return [
+        (start, end, children[i] if i < len(children) else None)
+        for i, (start, end) in enumerate(spans)
+    ]
+
+
+def _outside_text(src, blocks):
+    """Return `src` with every content-object block removed.
+
+    A marker appearing here is outside all objects, so it is file-level and
+    governs every object; a marker inside a block governs only that block.
+    """
+    parts = []
+    cursor = 0
+    for start, end, _ in blocks:
+        parts.append(src[cursor:start])
+        cursor = end
+    parts.append(src[cursor:])
+    return "".join(parts)
 
 
 def _has_modification_time(element):
@@ -578,64 +600,175 @@ def _action_scripts_text(element):
     return "\n".join((a.text or "") for a in element.iter("ActionScript"))
 
 
-def check_dated_content(root, src, disabled):
-    """W201/W202/W203/E204: per-Task/Fixlet presence and description checks."""
-    issues = []
-    for tag, element, lineno in _content_objects(root, src):
-        if tag not in DATED_CONTENT_TAGS:
-            continue
-        title = element.find("Title")
-        label = (title.text or "").strip() if title is not None else ""
-        where = f' ("{label}")' if label else ""
+def _check_dated_element(tag, element, disabled):
+    """W201/W202/W203/E204 for one Task/Fixlet element; issues at local line 1.
 
-        if "W201" not in disabled and not _has_modification_time(element):
+    Line 1 is the block's open tag; the caller offsets it to the file line.
+    """
+    if element is None or tag not in DATED_CONTENT_TAGS:
+        return []
+    issues = []
+    title = element.find("Title")
+    label = (title.text or "").strip() if title is not None else ""
+    where = f' ("{label}")' if label else ""
+
+    if "W201" not in disabled and not _has_modification_time(element):
+        issues.append(
+            (
+                1,
+                "W201",
+                f"{tag}{where} has no x-fixlet-modification-time MIMEField; add "
+                f"`{MODIFICATION_TIME_MARKER}` if intentional",
+            )
+        )
+    if "W202" not in disabled and element.find("SourceReleaseDate") is None:
+        issues.append(
+            (
+                1,
+                "W202",
+                f"{tag}{where} has no SourceReleaseDate; add "
+                f"`{SOURCE_RELEASE_DATE_MARKER}` if intentional",
+            )
+        )
+    if "E204" not in disabled:
+        description = element.find("Description")
+        text = "".join(description.itertext()) if description is not None else ""
+        if DESCRIPTION_PLACEHOLDER in text.lower():
             issues.append(
                 (
-                    lineno,
-                    "W201",
-                    f"{tag}{where} has no x-fixlet-modification-time MIMEField; add "
-                    f"`{MODIFICATION_TIME_MARKER}` if intentional",
+                    1,
+                    "E204",
+                    f"{tag}{where} Description contains the placeholder "
+                    f'"{DESCRIPTION_PLACEHOLDER}"; add `{DESCRIPTION_MARKER}` '
+                    "if intentional",
                 )
             )
-        if "W202" not in disabled and element.find("SourceReleaseDate") is None:
+    if "W203" not in disabled:
+        download = element.find("DownloadSize")
+        raw = _strip_cdata(download.text or "") if download is not None else ""
+        size = int(raw) if DOWNLOAD_SIZE_RE.match(raw) else 0
+        if size > 0 and not DOWNLOAD_KEYWORD_RE.search(_action_scripts_text(element)):
             issues.append(
                 (
-                    lineno,
-                    "W202",
-                    f"{tag}{where} has no SourceReleaseDate; add "
-                    f"`{SOURCE_RELEASE_DATE_MARKER}` if intentional",
+                    1,
+                    "W203",
+                    f"{tag}{where} has DownloadSize > 0 but no download/prefetch "
+                    f"keyword in any ActionScript; add `{DOWNLOAD_SIZE_MARKER}` "
+                    "if intentional",
                 )
             )
-        if "E204" not in disabled:
-            description = element.find("Description")
-            text = "".join(description.itertext()) if description is not None else ""
-            if DESCRIPTION_PLACEHOLDER in text.lower():
-                issues.append(
-                    (
-                        lineno,
-                        "E204",
-                        f"{tag}{where} Description contains the placeholder "
-                        f'"{DESCRIPTION_PLACEHOLDER}"; add `{DESCRIPTION_MARKER}` '
-                        "if intentional",
-                    )
-                )
-        if "W203" not in disabled:
-            download = element.find("DownloadSize")
-            raw = _strip_cdata(download.text or "") if download is not None else ""
-            size = int(raw) if DOWNLOAD_SIZE_RE.match(raw) else 0
-            if size > 0 and not DOWNLOAD_KEYWORD_RE.search(
-                _action_scripts_text(element)
-            ):
-                issues.append(
-                    (
-                        lineno,
-                        "W203",
-                        f"{tag}{where} has DownloadSize > 0 but no download/prefetch "
-                        f"keyword in any ActionScript; add `{DOWNLOAD_SIZE_MARKER}` "
-                        "if intentional",
-                    )
-                )
     return issues
+
+
+# (code, opt-out marker, check function) for the checks that scan element text;
+# each function scans a single content-object block and returns local linenos.
+VALUE_CHECKS = (
+    ("E200", MIMETYPE_MARKER, check_action_mimetypes),
+    ("E201", SOURCE_RELEASE_DATE_MARKER, check_source_release_date_format),
+    ("E202", MODIFICATION_TIME_MARKER, check_modification_time_format),
+    ("E203", DOWNLOAD_SIZE_MARKER, check_download_size_value),
+    ("E205", CPE_MARKER, check_cpe23),
+    ("E206", ACTION_UI_METADATA_MARKER, check_action_ui_metadata),
+    ("E207", CDATA_MARKER, check_cdata_required),
+    ("W204", CDATA_MARKER, check_actionscript_cdata),
+    ("W205", ACTION_BLANK_LINES_MARKER, check_actionscript_blank_lines),
+    ("W206", PREFETCH_MARKER, check_prefetch_lines),
+)
+
+# (presence code, opt-out marker) -- markers scoped like the value checks
+PRESENCE_MARKERS = (
+    ("W201", MODIFICATION_TIME_MARKER),
+    ("W202", SOURCE_RELEASE_DATE_MARKER),
+    ("W203", DOWNLOAD_SIZE_MARKER),
+    ("E204", DESCRIPTION_MARKER),
+)
+
+
+def _run_checks(src, root, disabled):
+    """Run every check on each content object independently; return sorted issues.
+
+    Each block's checks see only that block's text, and a marker governs a block
+    only if it sits inside it or outside all objects (file-level). Local line
+    numbers from the per-block scans are offset back to the file's line numbers.
+    """
+    blocks = _content_object_blocks(root, src)
+    outside = _outside_text(src, blocks)
+    issues = []
+    for start, _end, element in blocks:
+        block = src[start:_end]
+        start_line = _lineno(src, start)
+        marker_text = block + outside
+        for code, marker, check in VALUE_CHECKS:
+            if code in disabled or marker in marker_text:
+                continue
+            for lineno, found_code, message in check(block):
+                issues.append((start_line + lineno - 1, found_code, message))
+        presence_disabled = set(disabled)
+        for code, marker in PRESENCE_MARKERS:
+            if marker in marker_text:
+                presence_disabled.add(code)
+        tag = element.tag if element is not None else None
+        for lineno, found_code, message in _check_dated_element(
+            tag, element, presence_disabled
+        ):
+            issues.append((start_line + lineno - 1, found_code, message))
+    return sorted(issues)
+
+
+def _fix_block(block, marker_text, disabled, strict, now):
+    """Apply the auto-fixers to one content-object block; return (new, fixed).
+
+    Marker gating is the same per-block scoping used by the checks.
+    """
+    fixed = []
+    if "E203" not in disabled and DOWNLOAD_SIZE_MARKER not in marker_text:
+        block, got = fix_download_size(block)
+        fixed += got
+    if "W205" not in disabled and ACTION_BLANK_LINES_MARKER not in marker_text:
+        block, got = fix_blank_lines(block)
+        fixed += got
+    if "E207" not in disabled and CDATA_MARKER not in marker_text:
+        block, got = fix_cdata_required(block)
+        fixed += got
+    if strict and "W204" not in disabled and CDATA_MARKER not in marker_text:
+        block, got = fix_actionscript_cdata(block)
+        fixed += got
+    fix_srd = "W202" not in disabled and SOURCE_RELEASE_DATE_MARKER not in marker_text
+    fix_modtime = "W201" not in disabled and MODIFICATION_TIME_MARKER not in marker_text
+    if fix_srd or fix_modtime:
+        block, got = fix_missing_dates(
+            block, now, fix_srd=fix_srd, fix_modtime=fix_modtime
+        )
+        fixed += got
+    return block, fixed
+
+
+def _autofix(src, root, disabled, strict, now):
+    """Rewrite each content object independently; return (new_src, fixed).
+
+    Text outside the content objects is left untouched. Fixed line numbers are
+    offset back to the file's line numbers.
+    """
+    blocks = _content_object_blocks(root, src)
+    outside = _outside_text(src, blocks)
+    result = []
+    fixed = []
+    cursor = 0
+    for start, end, _element in blocks:
+        result.append(src[cursor:start])
+        block = src[start:end]
+        start_line = _lineno(src, start)
+        new_block, block_fixed = _fix_block(
+            block, block + outside, disabled, strict, now
+        )
+        fixed += [
+            (start_line + lineno - 1, code, message)
+            for lineno, code, message in block_fixed
+        ]
+        result.append(new_block)
+        cursor = end
+    result.append(src[cursor:])
+    return "".join(result), fixed
 
 
 # --------------------------------------------------------------------------
@@ -819,78 +952,25 @@ def check_file(path, disabled=frozenset(), strict=False, auto_fix=False, now=Non
         return [], []
 
     try:
-        ElementTree.fromstring(src)
+        root = ElementTree.fromstring(src)
     except ElementTree.ParseError as err:
         return [(1, "W200", f"not parseable BES XML ({err}); skipping")], []
 
     fixed = []
     if auto_fix:
-        new_src = src
-        if "E203" not in disabled and DOWNLOAD_SIZE_MARKER not in new_src:
-            new_src, got = fix_download_size(new_src)
-            fixed += got
-        if "W205" not in disabled and ACTION_BLANK_LINES_MARKER not in new_src:
-            new_src, got = fix_blank_lines(new_src)
-            fixed += got
-        if "E207" not in disabled and CDATA_MARKER not in new_src:
-            new_src, got = fix_cdata_required(new_src)
-            fixed += got
-        if strict and "W204" not in disabled and CDATA_MARKER not in new_src:
-            new_src, got = fix_actionscript_cdata(new_src)
-            fixed += got
-        fix_srd = "W202" not in disabled and SOURCE_RELEASE_DATE_MARKER not in new_src
-        fix_modtime = "W201" not in disabled and MODIFICATION_TIME_MARKER not in new_src
-        if fix_srd or fix_modtime:
-            new_src, got = fix_missing_dates(
-                new_src, now, fix_srd=fix_srd, fix_modtime=fix_modtime
-            )
-            fixed += got
+        new_src, fixed = _autofix(src, root, disabled, strict, now)
         if new_src != src:
             with open(path, "w", encoding="utf-8") as handle:
                 handle.write(new_src)
             src = new_src
+            try:
+                root = ElementTree.fromstring(src)
+            except ElementTree.ParseError as err:
+                return [
+                    (1, "W200", f"not parseable BES XML after fixes ({err})")
+                ], fixed
 
-    # re-parse the (possibly rewritten) source for the read-only checks
-    try:
-        root = ElementTree.fromstring(src)
-    except ElementTree.ParseError as err:
-        return [(1, "W200", f"not parseable BES XML after fixes ({err})")], fixed
-
-    issues = []
-    if "E200" not in disabled and MIMETYPE_MARKER not in src:
-        issues += check_action_mimetypes(src)
-    if "E201" not in disabled and SOURCE_RELEASE_DATE_MARKER not in src:
-        issues += check_source_release_date_format(src)
-    if "E202" not in disabled and MODIFICATION_TIME_MARKER not in src:
-        issues += check_modification_time_format(src)
-    if "E203" not in disabled and DOWNLOAD_SIZE_MARKER not in src:
-        issues += check_download_size_value(src)
-    if "E205" not in disabled and CPE_MARKER not in src:
-        issues += check_cpe23(src)
-    if "E206" not in disabled and ACTION_UI_METADATA_MARKER not in src:
-        issues += check_action_ui_metadata(src)
-    if "E207" not in disabled and CDATA_MARKER not in src:
-        issues += check_cdata_required(src)
-    if "W204" not in disabled and CDATA_MARKER not in src:
-        issues += check_actionscript_cdata(src)
-    if "W205" not in disabled and ACTION_BLANK_LINES_MARKER not in src:
-        issues += check_actionscript_blank_lines(src)
-    if "W206" not in disabled and PREFETCH_MARKER not in src:
-        issues += check_prefetch_lines(src)
-
-    presence_disabled = set(disabled)
-    if SOURCE_RELEASE_DATE_MARKER in src:
-        presence_disabled.add("W202")
-    if MODIFICATION_TIME_MARKER in src:
-        presence_disabled.add("W201")
-    if DOWNLOAD_SIZE_MARKER in src:
-        presence_disabled.add("W203")
-    if DESCRIPTION_MARKER in src:
-        presence_disabled.add("E204")
-    if {"W201", "W202", "W203", "E204"} - presence_disabled:
-        issues += check_dated_content(root, src, presence_disabled)
-
-    return sorted(issues), fixed
+    return _run_checks(src, root, disabled), fixed
 
 
 def is_bes_file(path):

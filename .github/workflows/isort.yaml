@@ -3,6 +3,8 @@ name: isort
 
 on:
   push:
+    branches:
+      - main
     paths:
       - "**.py"
       - ".isort.cfg"
