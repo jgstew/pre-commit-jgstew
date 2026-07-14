@@ -783,7 +783,7 @@ def fix_missing_dates(src, now=None, fix_srd=True, fix_modtime=True):
                 f"{indent}</MIMEField>\n"
             )
             inner = _insert_ordered(inner, block, MODTIME_ANCHORS)
-            fixed.append((lineno, "W201", f"inserted x-fixlet-modification-time"))
+            fixed.append((lineno, "W201", "inserted x-fixlet-modification-time"))
         return open_tag + inner + close
 
     return CONTENT_BLOCK_RE.sub(repl, src), fixed
