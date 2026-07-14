@@ -44,6 +44,17 @@
   language: python
   pass_filenames: True
   types: [text]
+- id: fix-files-to-ascii
+  name: Fix Files To ASCII
+  description: >
+    This hook transliterates non-ASCII file contents to ASCII in place using the
+    anyascii library (the auto-fixing companion to verify-files-are-ascii). It
+    exits non-zero when it changes a file so the change is reviewed and
+    re-staged.
+  entry: fix-files-to-ascii
+  language: python
+  pass_filenames: True
+  types: [text]
 - id: git-clean
   name: Run Git Clean
   description: This will delete untracked files by running `git clean -f`
