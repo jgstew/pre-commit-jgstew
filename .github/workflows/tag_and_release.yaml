@@ -48,6 +48,16 @@ jobs:
           echo "tagged=1" >> $GITHUB_OUTPUT
           fi
 
+      # run pre-commit hooks on all files, even if they are not staged
+      - name: Run pre-commit
+        if: always()
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: >-
+            --color=always
+            --all-files
+            --hook-stage manual
+
       # wait for all other tests to succeed
       #   what if no other tests?
       - name: Wait for tests to succeed

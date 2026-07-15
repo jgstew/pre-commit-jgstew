@@ -32,7 +32,7 @@ class GitRepo:
         return target
 
     def stage(self, relpath):
-        """git add a single path."""
+        """Git add a single path."""
         self.run("add", relpath)
 
     def commit_all(self, message="commit"):

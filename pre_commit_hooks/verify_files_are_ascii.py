@@ -1,4 +1,4 @@
-"""pre-commit hook to validate that the file being committed is ascii."""
+"""A pre-commit hook to validate that the file being committed is ascii."""
 
 import argparse
 import string
@@ -43,7 +43,7 @@ def main(argv=None):
 
     retval = 0
     for filename in args.filenames:
-        with open(filename, "r") as f:
+        with open(filename) as f:
             file_contents = f.read()
 
             if is_ascii and not file_contents.isascii():

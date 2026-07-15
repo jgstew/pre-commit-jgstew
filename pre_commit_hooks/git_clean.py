@@ -1,4 +1,4 @@
-"""git clean pre-commit hook."""
+"""Git clean pre-commit hook."""
 
 import argparse
 import subprocess
@@ -20,7 +20,7 @@ def build_argument_parser():
 
 
 def git_clean(auto_clean=False):
-    """do git clean -f"""
+    """Do `git clean -f` command."""
     cmd_flag = "-n"
     if auto_clean:
         cmd_flag = "-f"
@@ -37,7 +37,7 @@ def git_clean(auto_clean=False):
 
 
 def main(argv=None):
-    """execution starts here"""
+    """Execution starts here."""
     # Parse command line arguments.
     argparser = build_argument_parser()
     args = argparser.parse_args(argv)

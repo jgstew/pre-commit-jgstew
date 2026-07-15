@@ -1,4 +1,4 @@
-"""pre-commit hook to validate BigFix BES files."""
+"""A pre-commit hook to validate plist files."""
 
 import argparse
 

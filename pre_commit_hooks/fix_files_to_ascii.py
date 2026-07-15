@@ -1,4 +1,4 @@
-"""pre-commit hook to transliterate non-ASCII file contents to ASCII.
+"""A pre-commit hook to transliterate non-ASCII file contents to ASCII.
 
 This is the auto-fixing companion to `verify-files-are-ascii`: instead of just
 failing when a file contains non-ASCII characters, it rewrites the file in place,
@@ -81,7 +81,7 @@ def main(argv=None):
             # CRLF / CR / LF line endings are preserved exactly (anyascii and the
             # pre-substitution table leave ASCII control chars, including \r and
             # \n, untouched -- only non-ASCII content is transliterated).
-            with open(filename, "r", encoding="utf-8", newline="") as f:
+            with open(filename, encoding="utf-8", newline="") as f:
                 original = f.read()
         except (UnicodeDecodeError, OSError) as err:
             print(f"file: {filename} could not be read as UTF-8 text; skipping ({err})")

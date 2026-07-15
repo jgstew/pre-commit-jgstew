@@ -1,4 +1,8 @@
-"""pre-commit hook to validate that the file being committed has regex matches or groups that are lines within a reference file."""
+"""A pre-commit hook to validate that the file being committed has regex matches or
+groups.
+
+that are lines within a reference file.
+"""
 
 import argparse
 import os
@@ -35,13 +39,13 @@ def main(argv=None):
 
     re_pattern = re.compile(args.re_pattern)
 
-    with open(os.path.abspath(args.ref_file), "r") as f:
+    with open(os.path.abspath(args.ref_file)) as f:
         ref_file_array = f.read().splitlines()
     # print(ref_file_array)
 
     retval = 0
     for filename in args.filenames:
-        with open(filename, "r") as f:
+        with open(filename) as f:
             matches = re.findall(re_pattern, "\n".join(f.readlines()))
 
         for match in matches:

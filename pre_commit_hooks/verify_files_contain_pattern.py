@@ -1,4 +1,4 @@
-"""pre-commit hook to validate that the file being committed has regex matches."""
+"""A pre-commit hook to validate that the file being committed has regex matches."""
 
 import argparse
 import re
@@ -73,7 +73,7 @@ def main(argv=None):
 
     retval = 0
     for filename in args.filenames:
-        with open(filename, "r") as f:
+        with open(filename) as f:
             file_lines = f.readlines()
 
             if append_filepath:

@@ -1,6 +1,7 @@
-"""pre-commit hook to search, filter, and replace strings in files.
+"""A pre-commit hook to search, filter, and replace strings in files.
 
-The default functionality is to remove extra newlines between XML or HTML tags"""
+The default functionality is to remove extra newlines between XML or HTML tags
+"""
 
 import argparse
 import codecs
@@ -9,7 +10,7 @@ import re
 
 
 def validate_filepath(filepath=""):
-    """validate string is filepath or URL"""
+    """Validate string is filepath or URL."""
     if os.path.isfile(filepath) and os.access(filepath, os.R_OK):
         return filepath
     else:
@@ -106,7 +107,7 @@ def main(argv=None):
         # custom ones -- are written with `\n`), then the file's original ending
         # style is restored on write so a CRLF file stays CRLF.
         try:
-            with open(filename, "r", encoding=args.encoding, newline="") as f:
+            with open(filename, encoding=args.encoding, newline="") as f:
                 raw = f.read()
         except UnicodeDecodeError as err:
             # The file is in the hook's scope but does not decode with the chosen

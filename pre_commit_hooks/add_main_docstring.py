@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Add a boilerplate docstring to main() methods that are missing one or have an empty one."""
+"""Add a boilerplate docstring to main() methods that are missing one or have an empty
+one.
+"""
 
 import ast
 import sys

@@ -47,7 +47,7 @@ def build_argument_parser():
 
 
 def main(argv=None):
-    """execution starts here"""
+    """Execution starts here."""
     # Parse command line arguments.
     argparser = build_argument_parser()
     args = argparser.parse_args(argv)
@@ -64,7 +64,7 @@ def main(argv=None):
             continue
 
         # check if file contains: /.+echo +(["']::set-output +name=/
-        with open(filename, "r") as f:
+        with open(filename) as f:
             filetext = f.read()
 
             # check if file has the set-output issue:

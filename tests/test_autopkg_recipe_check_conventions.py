@@ -33,7 +33,10 @@ def rc(
     process=None,
     marker=None,
 ):
-    """Return YAML recipe text. `marker` inserts a `# <marker>` opt-out comment."""
+    """Return YAML recipe text.
+
+    `marker` inserts a `# <marker>` opt-out comment.
+    """
     if identifier is None:
         identifier = f"com.github.jgstew.download.{name}"
     if description is None:
@@ -67,7 +70,9 @@ def codes(issues):
 
 
 def check(tmp_path, target, **kw):
-    """Run check_files on `target` (an abs path) with root=tmp_path; (issues, fixed)."""
+    """Run check_files on `target` (an abs path) with root=tmp_path; (issues,
+    fixed).
+    """
     kw.setdefault("root", str(tmp_path))
     results = checker.check_files([target], **kw)
     return (results[0][1], results[0][2]) if results else ([], [])

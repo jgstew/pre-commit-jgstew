@@ -1,6 +1,7 @@
 """
 This is just a stub file
-This project uses setup.cfg and pyproject.toml
+This project uses setup.cfg and pyproject.toml files.
+
 This is required by `tag_and_release.yaml` action
 """
 

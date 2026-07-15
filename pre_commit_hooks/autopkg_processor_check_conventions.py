@@ -370,7 +370,9 @@ def is_blank_string(node):
 
 
 def line_has_marker(source_lines, lineno, marker):
-    """True if `marker` appears on the given 1-based line or the line directly above."""
+    """True if `marker` appears on the given 1-based line or the line directly
+    above.
+    """
     context = source_lines[max(0, lineno - 2) : lineno]
     return any(marker in line for line in context)
 

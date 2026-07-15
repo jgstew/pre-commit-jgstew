@@ -178,7 +178,7 @@ def test_w203_download_without_action(tmp_path):
 
 
 def test_w203_download_with_prefetch_ok(tmp_path):
-    body = "\nprefetch x.pkg sha1:%s size:10 https://e/x sha256:%s\ninstaller\n" % (
+    body = "\nprefetch x.pkg sha1:{} size:10 https://e/x sha256:{}\ninstaller\n".format(
         "a" * 40,
         "b" * 64,
     )
@@ -386,7 +386,7 @@ def test_w205_autofix_collapses(tmp_path):
 
 
 def test_w206_valid_prefetch_statement(tmp_path):
-    body = "\nprefetch x.pkg sha1:%s size:10 https://e/x sha256:%s\n" % (
+    body = "\nprefetch x.pkg sha1:{} size:10 https://e/x sha256:{}\n".format(
         "a" * 40,
         "b" * 64,
     )

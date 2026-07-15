@@ -1,4 +1,4 @@
-"""minimum changes required pre-commit hook."""
+"""Minimum changes required pre-commit hook."""
 
 import argparse
 import re
@@ -6,7 +6,7 @@ import subprocess
 
 
 def revert_file(filename):
-    """automatically revert file"""
+    """Automatically revert file."""
     print(f"INFO: auto reverting `{filename}`")
     # https://docs.gitlab.com/ee/topics/git/numerous_undo_possibilities_in_git/
     # git reset HEAD filename
