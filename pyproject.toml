@@ -4,3 +4,12 @@ requires = [
     "wheel"
 ]
 build-backend = "setuptools.build_meta"
+
+[tool.pytest.ini_options]
+# Put the repo root on sys.path so `from pre_commit_hooks import ...` resolves
+# from source without the package being installed. Without this, running the
+# bare `pytest` console script (as the pre-commit pytest hook does, in an
+# isolated env where the package is not installed) fails to import the package.
+# `python -m pytest` happens to work because -m adds the cwd, which masks this.
+pythonpath = ["."]
+testpaths = ["tests"]

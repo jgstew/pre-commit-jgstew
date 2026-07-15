@@ -3,6 +3,7 @@
 The default functionality is to remove extra newlines between XML or HTML tags"""
 
 import argparse
+import codecs
 import os
 import re
 
@@ -13,6 +14,15 @@ def validate_filepath(filepath=""):
         return filepath
     else:
         raise ValueError(filepath)
+
+
+def validate_encoding(name=""):
+    """Validate that `name` is a known codec, so a typo fails at parse time."""
+    try:
+        codecs.lookup(name)
+    except LookupError as err:
+        raise argparse.ArgumentTypeError(str(err))
+    return name
 
 
 def build_argument_parser():
@@ -46,6 +56,12 @@ def build_argument_parser():
         action="store_true",
         help="overwrite file with changes",
     )
+    parser.add_argument(
+        "--encoding",
+        default="utf-8",
+        type=validate_encoding,
+        help="text encoding used to read and write the files (default: utf-8)",
+    )
     return parser
 
 
@@ -70,8 +86,11 @@ def main(argv=None):
     Apply the search/filter/replace to each file. A file is only rewritten when
     its contents actually change; when that happens it is reported as `path:line`
     (the first changed line, so editors/terminals can jump straight to it).
-    Returns the number of files that changed, so the hook exits non-zero -- and
-    pre-commit asks for a re-stage -- only when it actually modified something.
+    A file in scope that is not valid UTF-8 cannot be processed and is reported
+    as an error (rather than silently skipped). Returns the count of files that
+    changed or failed, so the hook exits non-zero -- and pre-commit asks for a
+    re-stage or surfaces the failure -- whenever it modified or could not process
+    something.
     """
 
     # Parse command line arguments.
@@ -79,9 +98,30 @@ def main(argv=None):
     args = argparser.parse_args(argv)
 
     changed = 0
+    failed = 0
     for filename in args.filenames:
-        with open(filename, "r") as f:
-            original = f.read()
+        # newline="" reads the bytes without universal-newline translation, so
+        # the file's real line endings are known. The search/filter/replace runs
+        # on an LF-normalized copy (the patterns -- the default and the usual
+        # custom ones -- are written with `\n`), then the file's original ending
+        # style is restored on write so a CRLF file stays CRLF.
+        try:
+            with open(filename, "r", encoding=args.encoding, newline="") as f:
+                raw = f.read()
+        except UnicodeDecodeError as err:
+            # The file is in the hook's scope but does not decode with the chosen
+            # encoding, so it cannot be processed. Treat that as a FAILURE, not a
+            # silent skip: if the file was meant to be out of scope, the user
+            # should exclude it from the hook -- otherwise they would expect it to
+            # be processed, and a quiet skip would hide that it was not.
+            failed += 1
+            print(
+                f"{filename}: ERROR: could not decode as {args.encoding}, "
+                f"cannot process ({err})"
+            )
+            continue
+        uses_crlf = "\r\n" in raw
+        original = raw.replace("\r\n", "\n").replace("\r", "\n")
 
         # get matches of search RegEx
         filetext = original
@@ -95,15 +135,30 @@ def main(argv=None):
 
         # only act when the content actually changed
         if filetext != original:
+            # if configured, overwrite the original file with the changes,
+            # restoring the file's original line-ending style (CRLF -> CRLF)
+            if args.overwrite:
+                out = filetext.replace("\n", "\r\n") if uses_crlf else filetext
+                try:
+                    # encode BEFORE opening: open("w") truncates on open, so
+                    # encoding first means a failure leaves the file untouched.
+                    data = out.encode(args.encoding)
+                except UnicodeEncodeError as err:
+                    failed += 1
+                    print(
+                        f"{filename}: ERROR: could not encode the result as "
+                        f"{args.encoding}, cannot write (likely a character in "
+                        f"the --replace string): {err}"
+                    )
+                    continue
+                with open(filename, "wb") as f:
+                    f.write(data)
             changed = changed + 1
             # report as path:line so the location is clickable
             print(f"{filename}:{first_changed_line(original, filetext)}")
-            # if configured, overwrite the original file with the changes
-            if args.overwrite:
-                with open(filename, "w") as f:
-                    f.write(filetext)
 
-    return changed
+    # non-zero exit when files were changed (re-stage) or could not be processed
+    return changed + failed
 
 
 if __name__ == "__main__":

@@ -159,3 +159,18 @@ repos:
         args: ["--auto-fix=no"]
         types: [python]
         stages: [manual]
+
+  - repo: https://github.com/christophmeissner/pytest-pre-commit
+    rev: 1.0.0
+    hooks:
+      - id: pytest
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
+        additional_dependencies:
+          - validate_bes_xml
+          - importlib-metadata
+          - setuptools
+          - validate-plist-xml
+          - PyYAML
+          - anyascii
