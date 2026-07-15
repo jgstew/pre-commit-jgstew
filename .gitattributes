@@ -1,0 +1,5 @@
+# https://github.com/github/linguist/blob/master/lib/linguist/languages.yml
+# https://github.com/github/linguist/blob/master/docs/overrides.md
+*.bes text eol=CRLF linguist-language=XML whitespace=-blank-at-eol
+# https://stackoverflow.com/a/68932262
+*.reg working-tree-encoding=UTF-16LE eol=CRLF whitespace=-blank-at-eol

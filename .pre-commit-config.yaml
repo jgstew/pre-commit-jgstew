@@ -84,6 +84,16 @@ repos:
       # see config in pyproject.toml
       - id: codespell
 
+  - repo: https://github.com/jumanjihouse/pre-commit-hooks
+    rev: 3.0.0
+    hooks:
+      - id: check-mailmap
+        stages: [manual]
+      # - id: forbid-binary
+      - id: git-check  # Configure in .gitattributes
+      # - id: shellcheck
+      # - id: shfmt
+
   # - repo: https://github.com/crate-ci/typos
   #   # v1.48.0
   #   rev: v1.48.0
