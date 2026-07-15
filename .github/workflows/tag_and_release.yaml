@@ -60,6 +60,15 @@ jobs:
         env:
           STEPS_GETVERSION_OUTPUTS_VERSION: ${{ steps.getversion.outputs.version }}
 
+      # Cache the pre-commit environments based on the config file hash
+      - name: Cache Pre-Commit Environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            pre-commit-${{ runner.os }}-
+
       # run pre-commit hooks on all files, even if they are not staged
       - name: Run pre-commit
         if: always()
