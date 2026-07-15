@@ -15,6 +15,7 @@ jobs:
         with:
           # Required to grab the full history for proper pre-commit checks
           fetch-depth: 0
+          persist-credentials: false
 
       - uses: actions/setup-python@v6
         with:

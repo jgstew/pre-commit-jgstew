@@ -10,6 +10,8 @@ jobs:
     steps:
       - name: Check out code.
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - name: misspell
         if: ${{ !env.ACT }}
         uses: reviewdog/action-misspell@v1.27.0

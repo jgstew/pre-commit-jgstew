@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: "Checkout source code"
         uses: "actions/checkout@v7"
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -40,7 +42,7 @@ jobs:
         id: tagged
         shell: bash
         run: |
-          git show-ref --tags --verify --quiet -- "refs/tags/v${{ steps.getversion.outputs.version }}" && tag_not_exists=$? || tag_not_exists=$?
+          git show-ref --tags --verify --quiet -- "refs/tags/v${STEPS_GETVERSION_OUTPUTS_VERSION}" && tag_not_exists=$? || tag_not_exists=$?
           echo "exit code was $tag_not_exists"
           if [ $tag_not_exists -eq 0 ]
           then
@@ -50,6 +52,8 @@ jobs:
           echo will do release because tag does not already exist
           echo "tagged=1" >> $GITHUB_OUTPUT
           fi
+        env:
+          STEPS_GETVERSION_OUTPUTS_VERSION: ${{ steps.getversion.outputs.version }}
 
       # run pre-commit hooks on all files, even if they are not staged
       - name: Run pre-commit
