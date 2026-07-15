@@ -25,39 +25,50 @@ repos:
       - id: trailing-whitespace
       #  args: [--markdown-linebreak-ext=md]
       - id: detect-private-key
+
   - repo: https://github.com/adrienverge/yamllint.git
     rev: v1.38.0
     hooks:
       - id: yamllint
         args: [-c=.yamllint.yaml]
+
   - repo: https://github.com/pre-commit/mirrors-isort
     rev: v5.10.1
     hooks:
       - id: isort
+
   # - repo: https://gitlab.com/pycqa/flake8
   #   rev: 3.9.2
   #   hooks:
   #     - id: flake8
+
   - repo: https://github.com/psf/black
     rev: 26.5.1
     hooks:
       - id: black
+
   - repo: https://github.com/jgstew/pre-commit-jgstew
-    rev: v1.4.0
+    rev: v1.6.1
     hooks:
       - id: minimum-changes
         args: [--min-changes=0]
       - id: verify-files-are-ascii
 
-  # - repo: https://github.com/christophmeissner/pytest-pre-commit
-  #   rev: 1.0.0
-  #   hooks:
-  #     - id: pytest
-  #       pass_filenames: false
-  #       always_run: true
-  #       stages: [manual]
-  #       additional_dependencies:
-  #         - validate_bes_xml
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.37.4
+    hooks:
+      - id: check-github-workflows
+        args: ["--verbose"]
+        stages: [manual]
+      - id: check-dependabot
+        stages: [manual]
+
+  - repo: meta
+    hooks:
+      - id: check-useless-excludes
+        stages: [manual]
+      - id: check-hooks-apply
+        stages: [manual]
 
   # Local Hooks:
   # https://towardsdatascience.com/getting-started-with-python-pre-commit-hooks-28be2b2d09d5
