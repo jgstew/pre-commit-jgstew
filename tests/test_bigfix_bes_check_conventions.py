@@ -613,7 +613,7 @@ def test_mustache_template_skipped(tmp_path):
     assert codes(tmp_path, tmpl) == []
 
 
-def test_unparseable_xml_is_w200_only(tmp_path):
+def test_unparsable_xml_is_w200_only(tmp_path):
     assert codes(tmp_path, "<BES><Task><Unclosed></Task></BES>") == ["W200"]
 
 

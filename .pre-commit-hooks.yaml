@@ -137,7 +137,7 @@
     modification-time presence and download actions. Auto-fixes the fixable ones
     in place (DownloadSize -> 0, missing dates -> now, blank-line collapse; and,
     under --strict, CDATA wrapping) and exits 1 when anything was fixed.
-    Unparseable files are skipped (validate-bes owns validity). E-codes fail the
+    Unparsable files are skipped (validate-bes owns validity). E-codes fail the
     hook; pass --strict to also fail on warnings.
   language: python
   pass_filenames: True
