@@ -11,7 +11,7 @@ EXAMPLES = Path(__file__).parent / "examples"
 class GitRepo:
     """A throwaway git repository for exercising the git-backed hooks."""
 
-    def __init__(self, path):
+    def __init__(self, path) -> None:
         self.path = path
 
     def run(self, *args):

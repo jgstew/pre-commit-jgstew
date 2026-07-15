@@ -376,8 +376,10 @@ def check_action_mimetypes(src):
                 (
                     lineno,
                     "E200",
-                    "ActionScript has no MIMEType; add one of "
-                    f"{sorted(ALLOWED_MIMETYPES)}; add `{MIMETYPE_MARKER}` if intentional",
+                    (
+                        "ActionScript has no MIMEType; add one of "
+                        f"{sorted(ALLOWED_MIMETYPES)}; add `{MIMETYPE_MARKER}` if intentional"
+                    ),
                 )
             )
         elif mime_match.group(1) not in ALLOWED_MIMETYPES:
@@ -385,8 +387,10 @@ def check_action_mimetypes(src):
                 (
                     lineno,
                     "E200",
-                    f'ActionScript MIMEType "{mime_match.group(1)}" is not one of '
-                    f"{sorted(ALLOWED_MIMETYPES)}; add `{MIMETYPE_MARKER}` if intentional",
+                    (
+                        f'ActionScript MIMEType "{mime_match.group(1)}" is not one of '
+                        f"{sorted(ALLOWED_MIMETYPES)}; add `{MIMETYPE_MARKER}` if intentional"
+                    ),
                 )
             )
     return issues
@@ -404,8 +408,10 @@ def check_source_release_date_format(src):
                 (
                     _lineno(src, match.start()),
                     "E201",
-                    f'SourceReleaseDate "{value}" is not in YYYY-MM-DD format; '
-                    f"add `{SOURCE_RELEASE_DATE_MARKER}` if intentional",
+                    (
+                        f'SourceReleaseDate "{value}" is not in YYYY-MM-DD format; '
+                        f"add `{SOURCE_RELEASE_DATE_MARKER}` if intentional"
+                    ),
                 )
             )
     return issues
@@ -421,9 +427,11 @@ def check_modification_time_format(src):
                 (
                     _lineno(src, match.start()),
                     "E202",
-                    f'x-fixlet-modification-time "{value}" is not in the expected '
-                    "format (e.g. `Tue, 14 Jul 2026 18:32:35 +0000`); add "
-                    f"`{MODIFICATION_TIME_MARKER}` if intentional",
+                    (
+                        f'x-fixlet-modification-time "{value}" is not in the expected '
+                        "format (e.g. `Tue, 14 Jul 2026 18:32:35 +0000`); add "
+                        f"`{MODIFICATION_TIME_MARKER}` if intentional"
+                    ),
                 )
             )
     return issues
@@ -439,8 +447,10 @@ def check_download_size_value(src):
                 (
                     _lineno(src, match.start()),
                     "E203",
-                    f'DownloadSize "{value}" is not 0 or a positive integer; '
-                    f"add `{DOWNLOAD_SIZE_MARKER}` if intentional",
+                    (
+                        f'DownloadSize "{value}" is not 0 or a positive integer; '
+                        f"add `{DOWNLOAD_SIZE_MARKER}` if intentional"
+                    ),
                 )
             )
     return issues
@@ -458,8 +468,10 @@ def check_action_ui_metadata(src):
                 (
                     _lineno(src, match.start()),
                     "E206",
-                    f'action-ui-metadata "{value}" is not well-formed; add '
-                    f"`{ACTION_UI_METADATA_MARKER}` if intentional",
+                    (
+                        f'action-ui-metadata "{value}" is not well-formed; add '
+                        f"`{ACTION_UI_METADATA_MARKER}` if intentional"
+                    ),
                 )
             )
     return issues
@@ -477,8 +489,10 @@ def check_cpe23(src):
                 (
                     _lineno(src, match.start()),
                     "E205",
-                    f'x-fixlet-cpe23-item-name "{value}" is not a valid CPE 2.3 '
-                    f"string; add `{CPE_MARKER}` if intentional",
+                    (
+                        f'x-fixlet-cpe23-item-name "{value}" is not a valid CPE 2.3 '
+                        f"string; add `{CPE_MARKER}` if intentional"
+                    ),
                 )
             )
     return issues
@@ -502,8 +516,10 @@ def check_cdata_required(src):
                 (
                     _lineno(src, match.start()),
                     "E207",
-                    f"{tag} entity-escapes a character (< > &) that requires "
-                    f"<![CDATA[ ... ]]>; add `{CDATA_MARKER}` if intentional",
+                    (
+                        f"{tag} entity-escapes a character (< > &) that requires "
+                        f"<![CDATA[ ... ]]>; add `{CDATA_MARKER}` if intentional"
+                    ),
                 )
             )
     return issues
@@ -523,8 +539,10 @@ def check_actionscript_cdata(src):
             (
                 _lineno(src, match.start()),
                 "W204",
-                "ActionScript body is not wrapped in <![CDATA[ ... ]]>; add "
-                f"`{CDATA_MARKER}` if intentional (auto-fixable under --strict)",
+                (
+                    "ActionScript body is not wrapped in <![CDATA[ ... ]]>; add "
+                    f"`{CDATA_MARKER}` if intentional (auto-fixable under --strict)"
+                ),
             )
         )
     return issues
@@ -538,8 +556,10 @@ def check_actionscript_blank_lines(src):
             (
                 _lineno(src, match.start()),
                 "W205",
-                "more than one blank line before </ActionScript>; add "
-                f"`{ACTION_BLANK_LINES_MARKER}` if intentional",
+                (
+                    "more than one blank line before </ActionScript>; add "
+                    f"`{ACTION_BLANK_LINES_MARKER}` if intentional"
+                ),
             )
         )
     return issues
@@ -564,8 +584,10 @@ def check_prefetch_lines(src):
                 (
                     base + offset,
                     "W206",
-                    f'prefetch line "{stripped[:60]}" does not match the expected '
-                    f"shape; add `{PREFETCH_MARKER}` if intentional",
+                    (
+                        f'prefetch line "{stripped[:60]}" does not match the expected '
+                        f"shape; add `{PREFETCH_MARKER}` if intentional"
+                    ),
                 )
             )
     return issues
@@ -637,8 +659,10 @@ def _check_dated_element(tag, element, disabled):
             (
                 1,
                 "W201",
-                f"{tag}{where} has no x-fixlet-modification-time MIMEField; add "
-                f"`{MODIFICATION_TIME_MARKER}` if intentional",
+                (
+                    f"{tag}{where} has no x-fixlet-modification-time MIMEField; add "
+                    f"`{MODIFICATION_TIME_MARKER}` if intentional"
+                ),
             )
         )
     if "W202" not in disabled and element.find("SourceReleaseDate") is None:
@@ -646,8 +670,10 @@ def _check_dated_element(tag, element, disabled):
             (
                 1,
                 "W202",
-                f"{tag}{where} has no SourceReleaseDate; add "
-                f"`{SOURCE_RELEASE_DATE_MARKER}` if intentional",
+                (
+                    f"{tag}{where} has no SourceReleaseDate; add "
+                    f"`{SOURCE_RELEASE_DATE_MARKER}` if intentional"
+                ),
             )
         )
     if "E204" not in disabled:
@@ -658,9 +684,11 @@ def _check_dated_element(tag, element, disabled):
                 (
                     1,
                     "E204",
-                    f"{tag}{where} Description contains the placeholder "
-                    f'"{DESCRIPTION_PLACEHOLDER}"; add `{DESCRIPTION_MARKER}` '
-                    "if intentional",
+                    (
+                        f"{tag}{where} Description contains the placeholder "
+                        f'"{DESCRIPTION_PLACEHOLDER}"; add `{DESCRIPTION_MARKER}` '
+                        "if intentional"
+                    ),
                 )
             )
     if "W203" not in disabled:
@@ -672,9 +700,11 @@ def _check_dated_element(tag, element, disabled):
                 (
                     1,
                     "W203",
-                    f"{tag}{where} has DownloadSize > 0 but no download/prefetch "
-                    f"keyword in any ActionScript; add `{DOWNLOAD_SIZE_MARKER}` "
-                    "if intentional",
+                    (
+                        f"{tag}{where} has DownloadSize > 0 but no download/prefetch "
+                        f"keyword in any ActionScript; add `{DOWNLOAD_SIZE_MARKER}` "
+                        "if intentional"
+                    ),
                 )
             )
     return issues
@@ -1014,8 +1044,10 @@ def check_file(path, disabled=frozenset(), strict=False, auto_fix=False, now=Non
             (
                 1,
                 "E208",
-                f"BES file must use CRLF line endings throughout (found {lone_lf} "
-                f"lone LF, {lone_cr} lone CR); enable --auto-fix to normalize",
+                (
+                    f"BES file must use CRLF line endings throughout (found {lone_lf} "
+                    f"lone LF, {lone_cr} lone CR); enable --auto-fix to normalize"
+                ),
             )
         )
     return sorted(issues), fixed
@@ -1071,15 +1103,19 @@ def main(argv=None):
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="treat warnings as failures (non-zero exit) and enable the CDATA "
-        "auto-fix (W204); default: advisory",
+        help=(
+            "treat warnings as failures (non-zero exit) and enable the CDATA "
+            "auto-fix (W204); default: advisory"
+        ),
     )
     parser.add_argument(
         "--auto-fix",
         choices=["yes", "no"],
         default=None,
-        help="rewrite fixable conventions in place (default: yes when files are "
-        "given, no when auto-discovering)",
+        help=(
+            "rewrite fixable conventions in place (default: yes when files are "
+            "given, no when auto-discovering)"
+        ),
     )
     parser.add_argument(
         "--disable",
@@ -1090,8 +1126,10 @@ def main(argv=None):
     parser.add_argument(
         "files",
         nargs="*",
-        help="BES files to check; if omitted, all *.bes files in the current "
-        "folder and below are checked",
+        help=(
+            "BES files to check; if omitted, all *.bes files in the current "
+            "folder and below are checked"
+        ),
     )
     args = parser.parse_args(argv)
 

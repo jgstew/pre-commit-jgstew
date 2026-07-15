@@ -318,8 +318,10 @@ def check_identifier_references_name(recipe, source_lines, exact):
         (
             lineno,
             "W110",
-            f"Identifier `{identifier}` does not reference the Input NAME "
-            f"`{name}` {how}; add `# {IDENTIFIER_NAME_MARKER}` if intentional",
+            (
+                f"Identifier `{identifier}` does not reference the Input NAME "
+                f"`{name}` {how}; add `# {IDENTIFIER_NAME_MARKER}` if intentional"
+            ),
         )
     ]
 
@@ -358,9 +360,11 @@ def check_parent_recipe_resolvable(recipe, source_lines, identifier_index):
         (
             lineno,
             "W111",
-            f"ParentRecipe `{parent}` does not match any recipe Identifier "
-            f"in this repo{hint}; add `# {PARENT_RECIPE_MARKER}` if the parent is "
-            "defined elsewhere",
+            (
+                f"ParentRecipe `{parent}` does not match any recipe Identifier "
+                f"in this repo{hint}; add `# {PARENT_RECIPE_MARKER}` if the parent is "
+                "defined elsewhere"
+            ),
         )
     ]
 
@@ -385,8 +389,10 @@ def check_duplicate_identifier(recipe, path, source_lines, index):
         (
             lineno,
             "W112",
-            f"Identifier `{identifier}` is also declared by: {shown}; identifiers "
-            f"must be unique -- add `# {DUPLICATE_IDENTIFIER_MARKER}` if intentional",
+            (
+                f"Identifier `{identifier}` is also declared by: {shown}; identifiers "
+                f"must be unique -- add `# {DUPLICATE_IDENTIFIER_MARKER}` if intentional"
+            ),
         )
     ]
 
@@ -421,8 +427,10 @@ def check_duplicate_description(recipe, path, source_lines, index):
         (
             lineno,
             "W123",
-            f"Description is identical to: {shown}; make each recipe's Description "
-            f"distinct -- add `# {DUPLICATE_DESCRIPTION_MARKER}` if intentional",
+            (
+                f"Description is identical to: {shown}; make each recipe's Description "
+                f"distinct -- add `# {DUPLICATE_DESCRIPTION_MARKER}` if intentional"
+            ),
         )
     ]
 
@@ -464,9 +472,11 @@ def check_filename_identifier_type(recipe, path, source_lines):
         (
             lineno,
             "W113",
-            f"filename type `{ftype}` does not match identifier type `{itype}` "
-            f"(`{recipe.get('Identifier')}`); add `# {TYPE_MISMATCH_MARKER}` if "
-            "intentional",
+            (
+                f"filename type `{ftype}` does not match identifier type `{itype}` "
+                f"(`{recipe.get('Identifier')}`); add `# {TYPE_MISMATCH_MARKER}` if "
+                "intentional"
+            ),
         )
     ]
 
@@ -501,9 +511,11 @@ def check_minimum_version(recipe, source_lines):
         (
             lineno,
             "W114",
-            f"MinimumVersion `{value}` is below the repo floor "
-            f"`{MINIMUM_VERSION_FLOOR}`; add `# {MINIMUM_VERSION_MARKER}` if "
-            "intentional",
+            (
+                f"MinimumVersion `{value}` is below the repo floor "
+                f"`{MINIMUM_VERSION_FLOOR}`; add `# {MINIMUM_VERSION_MARKER}` if "
+                "intentional"
+            ),
         )
     ]
 
@@ -586,8 +598,10 @@ def check_http_urls(recipe, source_lines):
                 (
                     find_value_line(source_lines, value),
                     "W116",
-                    f"prefer https:// over http:// in {value!r}; add "
-                    f"`# {HTTP_URL_MARKER}` if the host only serves http",
+                    (
+                        f"prefer https:// over http:// in {value!r}; add "
+                        f"`# {HTTP_URL_MARKER}` if the host only serves http"
+                    ),
                 )
             )
     return issues
@@ -613,8 +627,10 @@ def check_regex_arguments(recipe, source_lines):
                     (
                         find_value_line(source_lines, value),
                         "W117",
-                        f"{key} is not a valid regex: {err}; add `# {REGEX_MARKER}` "
-                        "if it is only valid after %variable% substitution",
+                        (
+                            f"{key} is not a valid regex: {err}; add `# {REGEX_MARKER}` "
+                            "if it is only valid after %variable% substitution"
+                        ),
                     )
                 )
     return issues
@@ -649,9 +665,11 @@ def check_processor_refs_exist(recipe, source_lines, index):
             (
                 find_value_line(source_lines, ref),
                 "W118",
-                f"processor `{ref}` has no matching .py in {folder}/ (typo, rename, "
-                f"or a core processor mislabeled with the jgstew namespace); add "
-                f"`# {PROCESSOR_REF_MARKER}` if intentional",
+                (
+                    f"processor `{ref}` has no matching .py in {folder}/ (typo, rename, "
+                    f"or a core processor mislabeled with the jgstew namespace); add "
+                    f"`# {PROCESSOR_REF_MARKER}` if intentional"
+                ),
             )
         )
     return issues
@@ -682,9 +700,11 @@ def check_recipe_name_segments(recipe, source_lines):
         (
             lineno,
             "W121",
-            f"Input NAME `{name}` segment `{bad[0]}` should be alphanumeric and "
-            f"start with a letter (dash-separated, e.g. Firefox-Win); add "
-            f"`# {RECIPE_NAME_MARKER}` if intentional",
+            (
+                f"Input NAME `{name}` segment `{bad[0]}` should be alphanumeric and "
+                f"start with a letter (dash-separated, e.g. Firefox-Win); add "
+                f"`# {RECIPE_NAME_MARKER}` if intentional"
+            ),
         )
     ]
 
@@ -709,8 +729,10 @@ def check_recipe_name_suffix(recipe, source_lines):
         (
             lineno,
             "W122",
-            f"Input NAME `{name}` platform suffix `{suffix}` should be canonical "
-            f"`{canonical}`; add `# {RECIPE_NAME_SUFFIX_MARKER}` if intentional",
+            (
+                f"Input NAME `{name}` platform suffix `{suffix}` should be canonical "
+                f"`{canonical}`; add `# {RECIPE_NAME_SUFFIX_MARKER}` if intentional"
+            ),
         )
     ]
 
@@ -1098,8 +1120,10 @@ def check_process_spacing(src):
         (
             lineno,
             "W120",
-            "expected exactly one blank line before this Processor step (placed "
-            "before any comments that belong to it)",
+            (
+                "expected exactly one blank line before this Processor step (placed "
+                "before any comments that belong to it)"
+            ),
         )
         for lineno in changed
     ]
@@ -1333,15 +1357,19 @@ def main(argv=None):
     parser.add_argument(
         "--exact",
         action="store_true",
-        help="require the Input NAME to be a literal substring of the Identifier "
-        "instead of the default normalized comparison",
+        help=(
+            "require the Input NAME to be a literal substring of the Identifier "
+            "instead of the default normalized comparison"
+        ),
     )
     parser.add_argument(
         "--auto-fix",
         choices=["yes", "no"],
         default=None,
-        help="rewrite a path-like ParentRecipe (W111) to the parent's Identifier "
-        "in place (default: yes when files are given, no when auto-discovering)",
+        help=(
+            "rewrite a path-like ParentRecipe (W111) to the parent's Identifier "
+            "in place (default: yes when files are given, no when auto-discovering)"
+        ),
     )
     parser.add_argument(
         "--disable",
@@ -1352,8 +1380,10 @@ def main(argv=None):
     parser.add_argument(
         "files",
         nargs="*",
-        help="recipe files to check; if omitted, all recipe files in the current "
-        "folder and below are checked",
+        help=(
+            "recipe files to check; if omitted, all recipe files in the current "
+            "folder and below are checked"
+        ),
     )
     args = parser.parse_args(argv)
 

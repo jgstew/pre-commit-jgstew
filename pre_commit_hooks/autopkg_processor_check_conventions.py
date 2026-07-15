@@ -930,8 +930,10 @@ def check_autopkglib_import(tree):
             (
                 1,
                 "E031",
-                "processor must import from autopkglib "
-                "(e.g. `from autopkglib import Processor, ProcessorError`)",
+                (
+                    "processor must import from autopkglib "
+                    "(e.g. `from autopkglib import Processor, ProcessorError`)"
+                ),
             )
         ]
     return []
@@ -989,8 +991,10 @@ def check_main_guard(proc, info):
             (
                 guard.lineno,
                 "E007",
-                f"`__main__` block must be exactly "
-                f"`PROCESSOR = {proc.name}()` then `PROCESSOR.execute_shell()`",
+                (
+                    f"`__main__` block must be exactly "
+                    f"`PROCESSOR = {proc.name}()` then `PROCESSOR.execute_shell()`"
+                ),
             )
         )
     if not info.guard_is_last:
@@ -1040,9 +1044,11 @@ def check_class_name_camelcase(proc, source_lines):
         (
             proc.lineno,
             "E032",
-            f"class `{proc.name}` should be strict CamelCase (one capital per "
-            f"word; capital runs only for allowed acronyms: {allowed}); rename it, "
-            f"or add `# {PROCESSOR_NAME_MARKER}` if the name is intentional",
+            (
+                f"class `{proc.name}` should be strict CamelCase (one capital per "
+                f"word; capital runs only for allowed acronyms: {allowed}); rename it, "
+                f"or add `# {PROCESSOR_NAME_MARKER}` if the name is intentional"
+            ),
         )
     ]
 
@@ -1086,10 +1092,12 @@ def check_class_docstring_sufficient(proc):
             (
                 proc.lineno,
                 "E024",
-                f"class `{proc.name}` docstring is too brief; it is this "
-                "processor's primary documentation (AutoPkg shows it as the "
-                "description) -- expand it to describe what the processor does, "
-                "its input_variables, and its output_variables",
+                (
+                    f"class `{proc.name}` docstring is too brief; it is this "
+                    "processor's primary documentation (AutoPkg shows it as the "
+                    "description) -- expand it to describe what the processor does, "
+                    "its input_variables, and its output_variables"
+                ),
             )
         ]
     return []
@@ -1146,9 +1154,11 @@ def check_duplicate_class_docstring(proc, path):
         (
             proc.lineno,
             "E033",
-            f"class docstring is identical to: {shown}; each processor's docstring "
-            f"is its description and should be distinct -- add "
-            f"`# {DUPLICATE_DOCSTRING_MARKER}` if intentional",
+            (
+                f"class docstring is identical to: {shown}; each processor's docstring "
+                f"is its description and should be distinct -- add "
+                f"`# {DUPLICATE_DOCSTRING_MARKER}` if intentional"
+            ),
         )
     ]
 
@@ -1272,8 +1282,10 @@ def check_variable_name_style(attrs, source_lines):
                 (
                     lineno,
                     "W010",
-                    f"{label} `{key}` is not snake_case; rename it or add "
-                    f"`# {VARIABLE_NAME_MARKER}`",
+                    (
+                        f"{label} `{key}` is not snake_case; rename it or add "
+                        f"`# {VARIABLE_NAME_MARKER}`"
+                    ),
                 )
             )
     return issues
@@ -1536,8 +1548,10 @@ def check_test_recipe(path, stem):
         (
             1,
             "W005",
-            f"no test recipe found (expected a {stem}*.test.recipe.yaml in this "
-            'folder or a sibling "*test*" folder)',
+            (
+                f"no test recipe found (expected a {stem}*.test.recipe.yaml in this "
+                'folder or a sibling "*test*" folder)'
+            ),
         )
     ]
 
@@ -1564,8 +1578,10 @@ def check_platform_imports(tree, source_lines):
                     (
                         node.lineno,
                         "W006",
-                        f"imports platform-specific module `{name}`; guard it and "
-                        f"add `# {PLATFORM_IMPORT_MARKER}` if intentional",
+                        (
+                            f"imports platform-specific module `{name}`; guard it and "
+                            f"add `# {PLATFORM_IMPORT_MARKER}` if intentional"
+                        ),
                     )
                 )
     return issues
@@ -2033,8 +2049,10 @@ def maybe_fix_test_recipe(path, stem):
         (
             1,
             "W005",
-            f"created stub test recipe {os.path.relpath(recipe_path)} "
-            f"calling {stem} (fill in real Input/Process assertions)",
+            (
+                f"created stub test recipe {os.path.relpath(recipe_path)} "
+                f"calling {stem} (fill in real Input/Process assertions)"
+            ),
         )
     ]
 
@@ -2088,8 +2106,10 @@ def check_schema_enum(path, stem, src):
         (
             1,
             "W009",
-            f"processor `{ref}` is not listed in {SCHEMA_PATH}'s Processor enum; "
-            f"add it (or `# {SCHEMA_ENUM_MARKER}` if intentionally excluded)",
+            (
+                f"processor `{ref}` is not listed in {SCHEMA_PATH}'s Processor enum; "
+                f"add it (or `# {SCHEMA_ENUM_MARKER}` if intentionally excluded)"
+            ),
         )
     ]
 
@@ -2478,8 +2498,10 @@ def main(argv=None):
         "--auto-fix",
         choices=["yes", "no"],
         default=None,
-        help="automatically fix fixable issues in place (default: yes when files "
-        "are given, no when auto-discovering)",
+        help=(
+            "automatically fix fixable issues in place (default: yes when files "
+            "are given, no when auto-discovering)"
+        ),
     )
     parser.add_argument(
         "--disable",
@@ -2490,8 +2512,10 @@ def main(argv=None):
     parser.add_argument(
         "files",
         nargs="*",
-        help="processor .py files to check; if omitted, all processor-looking .py "
-        "files in the current folder and up to 3 subfolders deep are checked",
+        help=(
+            "processor .py files to check; if omitted, all processor-looking .py "
+            "files in the current folder and up to 3 subfolders deep are checked"
+        ),
     )
     args = parser.parse_args(argv)
 
