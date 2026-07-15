@@ -69,8 +69,8 @@ add example hook to actually use in the [.pre-commit-config.yaml](.pre-commit-co
 ## Related:
 
 - https://github.com/homebysix/pre-commit-macadmin
-- https://github.com/jumanjihouse/pre-commit-jgstew
-- https://github.com/Lucas-C/pre-commit-jgstew
+- https://github.com/jumanjihouse/pre-commit-hooks
+- https://github.com/Lucas-C/pre-commit-hooks
 - https://github.com/jumanjihouse/pre-commit-hook-yamlfmt
 - https://pre-commit.com/hooks.html
 - https://pre-commit.com/#new-hooks
