@@ -1,10 +1,10 @@
-"""Tests for pre_commit_hooks/revert_missing_change.py."""
+"""Tests for pre_commit_jgstew/revert_missing_change.py."""
 
 import subprocess
 
 import pytest
 
-from pre_commit_hooks import revert_missing_change as hook
+from pre_commit_jgstew import revert_missing_change as hook
 
 
 def test_no_files_returns_zero():

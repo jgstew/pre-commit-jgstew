@@ -1,6 +1,6 @@
-"""Tests for pre_commit_hooks/github_action_set_output_fix.py."""
+"""Tests for pre_commit_jgstew/github_action_set_output_fix.py."""
 
-from pre_commit_hooks import github_action_set_output_fix as hook
+from pre_commit_jgstew import github_action_set_output_fix as hook
 
 SET_OUTPUT_LINE = '        run: echo "::set-output name=version::1.2.3"\n'
 SAVE_STATE_LINE = '        run: echo "::save-state name=foo::bar"\n'

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for pre_commit_hooks/bigfix_bes_check_conventions.py.
+"""Tests for pre_commit_jgstew/bigfix_bes_check_conventions.py.
 
 These exercise the BES content checks (E200-E214, W200-W211), the auto-fixers
 (DownloadSize, missing dates, blank-line collapse, CDATA wrap, Title trim,
@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from pre_commit_hooks import bigfix_bes_check_conventions as checker
+from pre_commit_jgstew import bigfix_bes_check_conventions as checker
 
 FIXED_NOW = datetime(2026, 7, 14, 18, 32, 35, tzinfo=timezone.utc)
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for pre_commit_hooks/autopkg_processor_check_conventions.py.
+"""Tests for pre_commit_jgstew/autopkg_processor_check_conventions.py.
 
 These exercise the public helpers (processor detection, the stub heuristic,
 discovery) and the check/auto-fix pipeline via check_file/check_files, plus the
@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from pre_commit_hooks import autopkg_processor_check_conventions as checker
+from pre_commit_jgstew import autopkg_processor_check_conventions as checker
 
 # A fully convention-conforming processor (no E-codes expected). The class name
 # must match the filename stem, so write this as `ExampleClean.py`.

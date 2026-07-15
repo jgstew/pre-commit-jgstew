@@ -1,6 +1,6 @@
-"""Tests for pre_commit_hooks/minimum_changes.py."""
+"""Tests for pre_commit_jgstew/minimum_changes.py."""
 
-from pre_commit_hooks import minimum_changes as hook
+from pre_commit_jgstew import minimum_changes as hook
 
 
 def test_small_staged_change_fails(git_repo, monkeypatch):

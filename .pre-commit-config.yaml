@@ -105,7 +105,7 @@ repos:
         stages: [manual]
       - id: python-use-type-annotations
         stages: [manual]
-        exclude: ^pre_commit_hooks/autopkg_recipe_check_conventions.py$
+        exclude: ^pre_commit_jgstew/autopkg_recipe_check_conventions.py$
       - id: python-no-eval
         stages: [manual]
       - id: python-check-blanket-type-ignore
@@ -127,7 +127,7 @@ repos:
           (?x)^(
               README.md|
               pyproject.toml|
-              pre_commit_hooks/__init__.py|
+              pre_commit_jgstew/__init__.py|
               setup.cfg|
               setup.py
           )$
@@ -201,7 +201,7 @@ repos:
   #         - anyascii
 
   # Local Hooks:
-  # https://towardsdatascience.com/getting-started-with-python-pre-commit-hooks-28be2b2d09d5
+  # https://towardsdatascience.com/getting-started-with-python-pre-commit-jgstew-28be2b2d09d5
   # language: python -> pre-commit provisions an isolated venv, so bare `python`
   # always resolves (no dependence on a system `python` shim). Third-party
   # imports must be declared via additional_dependencies.
@@ -209,7 +209,7 @@ repos:
     hooks:
       - id: validate-bes-local
         name: validate-bes-local
-        entry: python pre_commit_hooks/validate_bes.py
+        entry: python pre_commit_jgstew/validate_bes.py
         language: python
         # isolated venv: declare the third-party import used by validate_bes.py
         additional_dependencies: [validate_bes_xml]
@@ -219,7 +219,7 @@ repos:
     hooks:
       - id: verify-files-contain-entry-local
         name: verify-files-contain-entry-local
-        entry: python pre_commit_hooks/verify_files_contain_entry.py
+        entry: python pre_commit_jgstew/verify_files_contain_entry.py
         language: python
         pass_filenames: True
         files: \.bes$
@@ -232,7 +232,7 @@ repos:
     hooks:
       - id: verify-files-contain-pattern-local
         name: verify-files-contain-pattern-local
-        entry: python pre_commit_hooks/verify_files_contain_pattern.py
+        entry: python pre_commit_jgstew/verify_files_contain_pattern.py
         language: python
         pass_filenames: True
         files: \.test_file$
@@ -241,7 +241,7 @@ repos:
     hooks:
       - id: minimum-changes-local
         name: minimum-changes-local
-        entry: python pre_commit_hooks/minimum_changes.py
+        entry: python pre_commit_jgstew/minimum_changes.py
         language: python
         pass_filenames: True
         args: [--min-changes=2]
@@ -250,14 +250,14 @@ repos:
     hooks:
       - id: git-clean
         name: git-clean-local
-        entry: python pre_commit_hooks/git_clean.py
+        entry: python pre_commit_jgstew/git_clean.py
         language: python
         files: .test_file
   # - repo: local
   #   hooks:
   #     - id: revert-missing-change
   #       name: revert-missing-change-local
-  #       entry: python pre_commit_hooks/revert_missing_change.py
+  #       entry: python pre_commit_jgstew/revert_missing_change.py
   #       language: python
   #       pass_filenames: True
   #       args: ['--change_regex=v[0-9]+(\.[0-9]+)*\s*</Title>']
@@ -266,7 +266,7 @@ repos:
     hooks:
       - id: github-action-set-output-fix
         name: github-action-set-output-fix-local
-        entry: python pre_commit_hooks/github_action_set_output_fix.py
+        entry: python pre_commit_jgstew/github_action_set_output_fix.py
         language: python
         pass_filenames: True
         args: ['--overwrite']
@@ -284,7 +284,7 @@ repos:
     hooks:
       - id: add-missing-docstrings
         name: add-missing-docstrings
-        entry: python pre_commit_hooks/add_main_docstring.py
+        entry: python pre_commit_jgstew/add_main_docstring.py
         language: python
         pass_filenames: True
   - repo: local
@@ -294,7 +294,7 @@ repos:
       # `check-processor-conventions` hook; see README / jgstew-recipes.
       - id: check-processor-conventions
         name: check-processor-conventions-local
-        entry: python pre_commit_hooks/autopkg_processor_check_conventions.py
+        entry: python pre_commit_jgstew/autopkg_processor_check_conventions.py
         language: python
         pass_filenames: True
         args: ["--auto-fix=no"]

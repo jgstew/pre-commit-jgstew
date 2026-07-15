@@ -44,7 +44,7 @@ jobs:
         run: if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
       - name: Test python import from src
         shell: bash
-        run: python -c "import pre_commit_hooks; print(pre_commit_hooks.__version__)"
+        run: python -c "import pre_commit_jgstew; print(pre_commit_jgstew.__version__)"
       - name: Run pytest
         shell: bash
         run: |
@@ -65,22 +65,22 @@ jobs:
         run: pip install $(find "dist" -type f -name "*.whl")
       - name: Test python import
         shell: bash
-        run: python -c "import pre_commit_hooks; print(pre_commit_hooks.__version__)"
+        run: python -c "import pre_commit_jgstew; print(pre_commit_jgstew.__version__)"
       - name: Test pre-commit hook invoke
         shell: bash
-        run: python -c "import pre_commit_hooks.git_clean; pre_commit_hooks.git_clean.main()"
+        run: python -c "import pre_commit_jgstew.git_clean; pre_commit_jgstew.git_clean.main()"
       - name: Test pre-commit hook invoke
         shell: bash
-        run: python -c "import pre_commit_hooks.minimum_changes; pre_commit_hooks.minimum_changes.main()"
+        run: python -c "import pre_commit_jgstew.minimum_changes; pre_commit_jgstew.minimum_changes.main()"
       - name: Test pre-commit hook invoke
         shell: bash
-        run: python -c "import pre_commit_hooks.regex_search_filter_replace; pre_commit_hooks.regex_search_filter_replace.main()"
+        run: python -c "import pre_commit_jgstew.regex_search_filter_replace; pre_commit_jgstew.regex_search_filter_replace.main()"
       - name: Test pre-commit hook invoke
         shell: bash
-        run: python -c "import pre_commit_hooks.revert_missing_change; pre_commit_hooks.revert_missing_change.main()"
+        run: python -c "import pre_commit_jgstew.revert_missing_change; pre_commit_jgstew.revert_missing_change.main()"
       - name: Test pre-commit hook invoke
         shell: bash
-        run: python -c "import pre_commit_hooks.validate_plist; pre_commit_hooks.validate_plist.main()"
+        run: python -c "import pre_commit_jgstew.validate_plist; pre_commit_jgstew.validate_plist.main()"
       - name: pip install of pre-commit
         shell: bash
         run: pip install pre-commit

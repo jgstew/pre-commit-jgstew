@@ -1,4 +1,4 @@
-"""Tests for pre_commit_hooks/fix_files_to_ascii.py.
+"""Tests for pre_commit_jgstew/fix_files_to_ascii.py.
 
 Requires the `anyascii` package (installed via install_requires); skipped where
 it is not available.
@@ -8,7 +8,7 @@ import pytest
 
 pytest.importorskip("anyascii")
 
-from pre_commit_hooks import fix_files_to_ascii as hook  # noqa: E402
+from pre_commit_jgstew import fix_files_to_ascii as hook  # noqa: E402
 
 
 def write(tmp_path, name, text):

@@ -1,6 +1,6 @@
-"""Tests for pre_commit_hooks/git_clean.py."""
+"""Tests for pre_commit_jgstew/git_clean.py."""
 
-from pre_commit_hooks import git_clean as hook
+from pre_commit_jgstew import git_clean as hook
 
 
 def test_clean_repo_reports_zero(git_repo, monkeypatch):

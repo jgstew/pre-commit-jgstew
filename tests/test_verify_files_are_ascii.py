@@ -1,6 +1,6 @@
-"""Tests for pre_commit_hooks/verify_files_are_ascii.py."""
+"""Tests for pre_commit_jgstew/verify_files_are_ascii.py."""
 
-from pre_commit_hooks import verify_files_are_ascii as hook
+from pre_commit_jgstew import verify_files_are_ascii as hook
 
 
 def write(tmp_path, name, content):

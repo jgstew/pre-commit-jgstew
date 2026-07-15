@@ -21,7 +21,7 @@ RegEx to match:
 echo +(["']::set-output +name=(\S+?)::(.+?)["'])(?:$| \|)
 
 Invoke this standalone:
-python3 pre_commit_hooks/github_action_set_output_fix.py .github/workflows/tag_and_release.yaml
+python3 pre_commit_jgstew/github_action_set_output_fix.py .github/workflows/tag_and_release.yaml
 """
 
 import argparse
