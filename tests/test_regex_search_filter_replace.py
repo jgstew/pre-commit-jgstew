@@ -1,8 +1,8 @@
-"""Tests for pre_commit_hooks/regex_search_filter_replace.py."""
+"""Tests for pre_commit_jgstew/regex_search_filter_replace.py."""
 
 import pytest
 
-from pre_commit_hooks import regex_search_filter_replace as hook
+from pre_commit_jgstew import regex_search_filter_replace as hook
 
 
 def write(tmp_path, name, content):

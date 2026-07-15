@@ -6,7 +6,7 @@ on:
     branches:
       - main
     paths:
-      - "pre_commit_hooks/__init__.py"
+      - "pre_commit_jgstew/__init__.py"
       - ".github/workflows/tag_and_release.yaml"
 
 # creates git tags and GitHub releases (and uploads the wheel), so the job

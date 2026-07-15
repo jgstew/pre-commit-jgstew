@@ -1,10 +1,10 @@
-"""Tests for pre_commit_hooks/shared_utils.py."""
+"""Tests for pre_commit_jgstew/shared_utils.py."""
 
 import subprocess
 
 import pytest
 
-from pre_commit_hooks import shared_utils
+from pre_commit_jgstew import shared_utils
 
 
 def test_validate_filepath_ok(tmp_path):

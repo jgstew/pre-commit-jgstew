@@ -1,4 +1,4 @@
-"""Tests for pre_commit_hooks/validate_bes.py.
+"""Tests for pre_commit_jgstew/validate_bes.py.
 
 Requires the `validate_bes_xml` package (installed via requirements.txt in CI);
 skipped where it is not available.
@@ -12,7 +12,7 @@ EXAMPLES = Path(__file__).parent / "examples"
 
 pytest.importorskip("validate_bes_xml")
 
-from pre_commit_hooks import validate_bes as hook  # noqa: E402
+from pre_commit_jgstew import validate_bes as hook  # noqa: E402
 
 
 def test_valid_bes_passes():

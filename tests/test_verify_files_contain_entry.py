@@ -1,8 +1,8 @@
-"""Tests for pre_commit_hooks/verify_files_contain_entry.py."""
+"""Tests for pre_commit_jgstew/verify_files_contain_entry.py."""
 
 from pathlib import Path
 
-from pre_commit_hooks import verify_files_contain_entry as hook
+from pre_commit_jgstew import verify_files_contain_entry as hook
 
 EXAMPLES = Path(__file__).parent / "examples"
 REF = str(EXAMPLES / "example.test_file")

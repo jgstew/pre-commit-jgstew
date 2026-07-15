@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the pre_commit_hooks test suite."""
+"""Shared pytest fixtures for the pre_commit_jgstew test suite."""
 
 import subprocess
 from pathlib import Path

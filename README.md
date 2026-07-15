@@ -1,4 +1,4 @@
-# pre-commit-hooks
+# pre-commit-jgstew
 
 custom pre-commit hooks by JGStew.
 
@@ -48,9 +48,9 @@ The AutoPkg convention hooks (`check-processor-conventions`, `check-recipe-conve
 
 ## Test commands:
 
-- test python import and version: `python -c "import pre_commit_hooks; print(pre_commit_hooks.__version__)"`
+- test python import and version: `python -c "import pre_commit_jgstew; print(pre_commit_jgstew.__version__)"`
 - test version defined through [setup.py](setup.py): `python setup.py --version`
-  - version defined in [setup.cfg](setup.cfg): `version = attr: pre_commit_hooks.__version__`
+  - version defined in [setup.cfg](setup.cfg): `version = attr: pre_commit_jgstew.__version__`
 - test builds:
   - `python ./setup.py build`
   - `python -m build`
@@ -58,19 +58,19 @@ The AutoPkg convention hooks (`check-processor-conventions`, `check-recipe-conve
 
 ## creating a new hook to add to this repo:
 
-create python file in folder [pre_commit_hooks](pre_commit_hooks) with name of hook with underscores.py
+create python file in folder [pre_commit_jgstew](pre_commit_jgstew) with name of hook with underscores.py
 
 add entrypoint to the [setup.cfg](setup.cfg) file
 
-add hook definition to the [.pre-commit-hooks.yaml](.pre-commit-hooks.yaml) file
+add hook definition to the [.pre-commit-jgstew.yaml](.pre-commit-jgstew.yaml) file
 
 add example hook to actually use in the [.pre-commit-config.yaml](.pre-commit-config.yaml) file
 
 ## Related:
 
 - https://github.com/homebysix/pre-commit-macadmin
-- https://github.com/jumanjihouse/pre-commit-hooks
-- https://github.com/Lucas-C/pre-commit-hooks
+- https://github.com/jumanjihouse/pre-commit-jgstew
+- https://github.com/Lucas-C/pre-commit-jgstew
 - https://github.com/jumanjihouse/pre-commit-hook-yamlfmt
 - https://pre-commit.com/hooks.html
 - https://pre-commit.com/#new-hooks

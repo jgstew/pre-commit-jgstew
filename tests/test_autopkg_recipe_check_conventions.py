@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for pre_commit_hooks/autopkg_recipe_check_conventions.py.
+"""Tests for pre_commit_jgstew/autopkg_recipe_check_conventions.py.
 
 These exercise the recipe convention checks (W100-W123), their auto-fixers, the
 file-level opt-out markers, and main()'s exit codes. Cross-file checks (duplicate
@@ -11,7 +11,7 @@ main() tests chdir into tmp_path.
 
 import pytest
 
-from pre_commit_hooks import autopkg_recipe_check_conventions as checker
+from pre_commit_jgstew import autopkg_recipe_check_conventions as checker
 
 PLIST = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

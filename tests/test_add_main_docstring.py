@@ -1,8 +1,8 @@
-"""Tests for pre_commit_hooks/add_main_docstring.py."""
+"""Tests for pre_commit_jgstew/add_main_docstring.py."""
 
 import sys
 
-from pre_commit_hooks import add_main_docstring as hook
+from pre_commit_jgstew import add_main_docstring as hook
 
 MISSING = """\
 def main():
