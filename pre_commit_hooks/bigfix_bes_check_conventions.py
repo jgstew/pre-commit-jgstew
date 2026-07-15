@@ -55,7 +55,7 @@ The allowed <ActionScript> MIMETypes are:
 
 E-codes are real issues and fail the hook. W-codes are advisory and do NOT fail
 the hook unless --strict is given; wire the hook with `verbose: true` to surface
-them. W200 is how the tool stays out of validate-bes's lane: an unparseable file
+them. W200 is how the tool stays out of validate-bes's lane: an unparsable file
 is skipped, not failed, here.
 
 --auto-fix rewrites the fixable conventions in place: an invalid/empty

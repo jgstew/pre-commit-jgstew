@@ -5,6 +5,13 @@ requires = [
 ]
 build-backend = "setuptools.build_meta"
 
+[tool.codespell]
+# "caf" is not a word here: the tests use the French word for coffee (an
+# accented "e" on the end) as sample non-ASCII text, written with a \u escape to
+# keep the source ASCII (verify-files-are-ascii). codespell therefore sees the
+# bare token "caf" and flags it as "calf"; ignore that specific token.
+ignore-words-list = "caf"
+
 [tool.pytest.ini_options]
 # Put the repo root on sys.path so `from pre_commit_hooks import ...` resolves
 # from source without the package being installed. Without this, running the

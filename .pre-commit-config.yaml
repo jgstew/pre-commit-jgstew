@@ -81,10 +81,10 @@ repos:
       - id: pydocstringformatter
         args: ["--max-summary-lines=2", "--linewrap-full-docstring"]
 
-  # - repo: https://github.com/codespell-project/codespell
-  #   rev: v2.4.2
-  #   hooks:
-  #     - id: codespell
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.2
+    hooks:
+      - id: codespell
 
   - repo: https://github.com/abravalheri/validate-pyproject
     rev: v0.25
