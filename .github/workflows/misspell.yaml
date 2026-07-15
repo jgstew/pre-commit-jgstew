@@ -3,6 +3,10 @@ name: misspell
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+  checks: write
+
 jobs:
   misspell:
     name: runner / misspell

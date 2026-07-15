@@ -9,6 +9,11 @@ on:
       - "pre_commit_hooks/__init__.py"
       - ".github/workflows/tag_and_release.yaml"
 
+# creates git tags and GitHub releases (and uploads the wheel), so the job
+# needs write access to repository contents; everything else stays default-none.
+permissions:
+  contents: write
+
 jobs:
   release_new_tag:
     name: Tag and Release

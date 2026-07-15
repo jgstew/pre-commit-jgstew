@@ -23,6 +23,9 @@ on:
       - ".github/workflows/test_build.yaml"
       - ".github/workflows/tag_and_release.yaml"
 
+permissions:
+  contents: read
+
 jobs:
   test_build:
     runs-on: ubuntu-latest

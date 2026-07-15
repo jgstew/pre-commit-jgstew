@@ -17,6 +17,9 @@ on:
       - "requirements.txt"
       - ".github/workflows/flake8.yaml"
 
+permissions:
+  contents: read
+
 jobs:
   flake8:
     name: Python Lint Flake8

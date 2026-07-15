@@ -80,6 +80,7 @@ repos:
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.2
     hooks:
+      # see config in pyproject.toml
       - id: codespell
 
   # - repo: https://github.com/crate-ci/typos
@@ -302,6 +303,7 @@ repos:
   - repo: https://github.com/christophmeissner/pytest-pre-commit
     rev: 1.0.0
     hooks:
+      # see config in pyproject.toml
       - id: pytest
         pass_filenames: false
         always_run: true
