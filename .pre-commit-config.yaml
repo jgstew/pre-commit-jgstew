@@ -43,7 +43,7 @@ repos:
       - id: black
 
   - repo: https://github.com/jgstew/pre-commit-jgstew
-    rev: v1.6.1
+    rev: v1.6.2
     hooks:
       - id: minimum-changes
         args: [--min-changes=0]
@@ -156,11 +156,24 @@ repos:
   #     - id: pylint
   #       args: [--rcfile=.pylintrc]
 
-  # - repo: https://github.com/astral-sh/ruff-pre-commit
-  #   rev: v0.15.21
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.21
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+
+  # - repo: https://github.com/RobertCraigie/pyright-python
+  #   rev: v1.1.411
   #   hooks:
-  #     - id: ruff
-  #       args: [--fix, --exit-non-zero-on-fix]
+  #     - id: pyright  # pylance
+  #       exclude: ^examples/.*$|^tests/.*$
+  #       additional_dependencies:
+  #         - validate_bes_xml
+  #         - importlib-metadata
+  #         - setuptools
+  #         - validate-plist-xml
+  #         - PyYAML
+  #         - anyascii
 
   # Local Hooks:
   # https://towardsdatascience.com/getting-started-with-python-pre-commit-hooks-28be2b2d09d5

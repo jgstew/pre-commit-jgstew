@@ -1,7 +1,6 @@
 """Minimum changes required pre-commit hook."""
 
 import argparse
-import re
 import subprocess
 
 
