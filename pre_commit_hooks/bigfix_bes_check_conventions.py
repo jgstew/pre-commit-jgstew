@@ -30,6 +30,16 @@ Checks:
           and CDATA-wrapped)
     E208  the file is not CRLF throughout -- BES files must use CRLF line
           endings (fixable -> the whole file is normalized to CRLF)
+    E209  a <CVENames> value is not a valid CVE id (e.g. CVE-2021-44228), or
+          more than one <CVENames> element is present in a single content object
+    E210  two <MIMEField> entries in one content object share the same <Name>
+    E211  a <Title> is a default placeholder ("Custom Fixlet"/"Custom Task"/
+          "Custom Baseline"/"Custom Analysis")
+    E212  a <Relevance> is the literal `true` (case-insensitive) -- it targets
+          every endpoint
+    E213  a <Relevance> is empty or whitespace only
+    E214  the file has no XML declaration, or its declaration does not specify
+          encoding="UTF-8" (fixable -> declaration inserted / encoding set)
     W200  the file is not parseable BES XML; skipped (advisory -- validate-bes
           is the authority on file validity)
     W201  a Task/Fixlet has no x-fixlet-modification-time MIMEField (fixable ->
@@ -43,6 +53,13 @@ Checks:
     W205  an <ActionScript> has more than one blank line before </ActionScript>
           (fixable -> collapsed to one)
     W206  a prefetch / "add prefetch item" line does not match the expected shape
+    W207  a prefetch / "add prefetch item" URL is not https
+    W208  an <ActionScript> body is empty (only blank lines and //-comments)
+    W209  a <Title> has leading/trailing whitespace/newlines or embedded tabs
+          (fixable -> trimmed, tabs replaced with spaces)
+    W210  a line has trailing whitespace (fixable -> stripped)
+    W211  an <ActionScript> uses a dynamic `download` statement (a line whose
+          first non-whitespace token is `download`); prefer a static prefetch
 
 The allowed <ActionScript> MIMETypes are:
     application/x-Fixlet-Windows-Shell     (the DEFAULT BigFix ActionScript type
@@ -61,13 +78,17 @@ is skipped, not failed, here.
 --auto-fix rewrites the fixable conventions in place: an invalid/empty
 DownloadSize -> 0 (E203); a missing SourceReleaseDate -> today (W202); a missing
 x-fixlet-modification-time -> the moment the linter ran (W201); collapsed blank
-lines before </ActionScript> (W205); and a Description/Relevance/ActionScript
-that entity-escapes < > & is unescaped and CDATA-wrapped (E207). One fix is
-gated behind --strict: wrapping an otherwise-plain ActionScript body in
-<![CDATA[ ... ]]> (W204). Finally, CRLF normalization runs LAST: whenever
---auto-fix is on, the whole file is rewritten with CRLF line endings (E208), so
-any fix -- and any file that was not already all-CRLF -- ends up entirely CRLF
-rather than preserving a mix. --auto-fix defaults to yes when files are given
+lines before </ActionScript> (W205); a Title trimmed with tabs replaced by
+spaces (W209); trailing whitespace stripped from every line (W210); a missing or
+non-UTF-8 XML declaration inserted / normalized (E214); and a
+Description/Relevance/ActionScript that entity-escapes < > & is unescaped and
+CDATA-wrapped (E207). One fix is gated behind --strict: wrapping an
+otherwise-plain ActionScript body in <![CDATA[ ... ]]> (W204). The file-level
+fixers (W210 then E214) run after the per-block ones. Finally, CRLF
+normalization runs LAST: whenever --auto-fix is on, the whole file is rewritten
+with CRLF line endings (E208), so any fix -- and any file that was not already
+all-CRLF -- ends up entirely CRLF rather than preserving a mix. --auto-fix
+defaults to yes when files are given
 explicitly, but to no when auto-discovering, so a bare run is read-only. An
 auto-fixed file fails the hook so the change is reviewed and re-staged.
 
@@ -92,6 +113,15 @@ file, e.g. in an XML comment):
     cdata-ok                (W204 and E207)
     action-blank-lines-ok   (W205)
     prefetch-ok             (W206)
+    prefetch-https-ok       (W207)
+    actionscript-empty-ok   (W208)
+    title-ok                (E211 and W209)
+    relevance-ok            (E212 and E213)
+    xml-declaration-ok      (E214)
+    trailing-whitespace-ok  (W210)
+    download-ok             (W211)
+    cve-names-ok            (E209)
+    mimefield-name-ok       (E210)
 
 Files that look like mustache templates (containing `{{ ... }}`, e.g. the
 `*.bes.mustache` sources that ContentFromTemplate renders) are skipped silently:
@@ -125,6 +155,15 @@ ACTION_UI_METADATA_MARKER = "action-ui-metadata-ok"  # E206
 CDATA_MARKER = "cdata-ok"  # W204
 ACTION_BLANK_LINES_MARKER = "action-blank-lines-ok"  # W205
 PREFETCH_MARKER = "prefetch-ok"  # W206
+PREFETCH_HTTPS_MARKER = "prefetch-https-ok"  # W207
+ACTIONSCRIPT_EMPTY_MARKER = "actionscript-empty-ok"  # W208
+TITLE_MARKER = "title-ok"  # E211, W209
+RELEVANCE_MARKER = "relevance-ok"  # E212, E213
+XML_DECL_MARKER = "xml-declaration-ok"  # E214
+TRAILING_WS_MARKER = "trailing-whitespace-ok"  # W210
+DOWNLOAD_MARKER = "download-ok"  # W211
+CVE_NAMES_MARKER = "cve-names-ok"  # E209
+MIMEFIELD_DUP_MARKER = "mimefield-name-ok"  # E210
 
 BES_EXTENSIONS = (".bes",)
 
@@ -186,6 +225,34 @@ PREFETCH_OK_RE = re.compile(
     r" sha256=\S{64}$)"
 )
 DOWNLOAD_KEYWORD_RE = re.compile(r"prefetch|download|add prefetch item", re.IGNORECASE)
+
+# a line whose first non-whitespace token is the `download` action verb (a
+# dynamic download); a `download` appearing later on a line, or in a comment,
+# is not matched -- only a real statement is.
+DOWNLOAD_STMT_RE = re.compile(r"^[ \t]*download\b", re.IGNORECASE)
+# the URL inside a prefetch / add-prefetch-item line (used to check the scheme)
+PREFETCH_URL_RE = re.compile(r"\b(?:url=|https?://)", re.IGNORECASE)
+PREFETCH_URL_SCHEME_RE = re.compile(r"(?:url=)?(https?)://", re.IGNORECASE)
+
+# <Title>, <Relevance>, and <CVENames> element bodies
+TITLE_TAG_RE = re.compile(r"<Title>(.*?)</Title>", re.DOTALL)
+RELEVANCE_TAG_RE = re.compile(r"<Relevance>(.*?)</Relevance>", re.DOTALL)
+CVENAMES_TAG_RE = re.compile(r"<CVENames>(.*?)</CVENames>", re.DOTALL)
+
+# a single CVE identifier, e.g. CVE-2021-44228 (4-digit year, 4+ digit sequence)
+CVE_RE = re.compile(r"^CVE-\d{4}-\d{4,}$")
+
+# the default placeholder titles the BigFix console emits for new content
+DEFAULT_TITLES = frozenset(
+    ["custom fixlet", "custom task", "custom baseline", "custom analysis"]
+)
+
+# an XML declaration at the very start of the document, and its encoding value
+XML_DECL_RE = re.compile("^\\ufeff?\\s*<\\?xml\\b([^>]*)\\?>")
+XML_DECL_ENCODING_RE = re.compile(r'encoding\s*=\s*"([^"]*)"', re.IGNORECASE)
+XML_DECL_VERSION_RE = re.compile(r'version\s*=\s*"([^"]*)"', re.IGNORECASE)
+# trailing spaces/tabs at the end of any line (LF-normalized text)
+TRAILING_WS_RE = re.compile(r"[ \t]+$", re.MULTILINE)
 
 # an entity reference for a character that requires CDATA (or escaping): < > &
 # -- either the named entity or a decimal/hex numeric reference to it. A literal
@@ -256,6 +323,12 @@ KNOWN_CODES = frozenset(
         "E206",  # action-ui-metadata not well-formed
         "E207",  # entity-escaped special chars where CDATA is required
         "E208",  # file is not entirely CRLF-terminated
+        "E209",  # CVENames value invalid or multiple CVENames elements
+        "E210",  # duplicate MIMEField Name within one content object
+        "E211",  # Title is a default placeholder value
+        "E212",  # Relevance is the literal `true`
+        "E213",  # Relevance is empty / whitespace only
+        "E214",  # XML declaration missing or not encoding="UTF-8"
         "W200",  # not parseable BES XML; skipped
         "W201",  # Task/Fixlet missing x-fixlet-modification-time
         "W202",  # Task/Fixlet missing SourceReleaseDate
@@ -263,6 +336,11 @@ KNOWN_CODES = frozenset(
         "W204",  # ActionScript body not wrapped in CDATA
         "W205",  # more than one blank line before </ActionScript>
         "W206",  # prefetch / add-prefetch-item line malformed
+        "W207",  # prefetch / add-prefetch-item URL is not https
+        "W208",  # ActionScript body empty (only blank lines and //-comments)
+        "W209",  # Title has leading/trailing whitespace or embedded tabs
+        "W210",  # a line has trailing whitespace
+        "W211",  # ActionScript uses a dynamic `download` statement
     ]
 )
 
@@ -593,6 +671,207 @@ def check_prefetch_lines(src):
     return issues
 
 
+def check_prefetch_https(src):
+    """W207: a prefetch / add-prefetch-item URL should use https, not http."""
+    issues = []
+    for match in ACTIONSCRIPT_FULL_RE.finditer(src):
+        body = match.group(2)
+        base = _lineno(src, match.start(2))
+        for offset, raw in enumerate(body.splitlines()):
+            line = raw.rstrip("\r")
+            stripped = line.strip()
+            is_prefetch = stripped.startswith("prefetch ")
+            is_add = "add prefetch item" in stripped
+            if not (is_prefetch or is_add):
+                continue
+            scheme = PREFETCH_URL_SCHEME_RE.search(line)
+            if scheme is not None and scheme.group(1).lower() == "http":
+                issues.append(
+                    (
+                        base + offset,
+                        "W207",
+                        (
+                            f'prefetch URL in "{stripped[:60]}" uses http, not https; '
+                            f"add `{PREFETCH_HTTPS_MARKER}` if intentional"
+                        ),
+                    )
+                )
+    return issues
+
+
+def _actionscript_is_empty(body):
+    """True if an ActionScript body has only blank lines and //-comment lines."""
+    content = _strip_cdata(body)
+    for raw in content.splitlines():
+        line = raw.strip()
+        if line and not line.startswith("//"):
+            return False
+    return True
+
+
+def check_empty_actionscript(src):
+    """W208: an ActionScript body must contain more than blank/// lines."""
+    issues = []
+    for match in ACTIONSCRIPT_FULL_RE.finditer(src):
+        if _actionscript_is_empty(match.group(2)):
+            issues.append(
+                (
+                    _lineno(src, match.start()),
+                    "W208",
+                    (
+                        "ActionScript body is empty (only blank lines and "
+                        f"//-comments); add `{ACTIONSCRIPT_EMPTY_MARKER}` if intentional"
+                    ),
+                )
+            )
+    return issues
+
+
+def check_dynamic_download(src):
+    """W211: warn on a dynamic `download` statement (prefer a static prefetch)."""
+    issues = []
+    for match in ACTIONSCRIPT_FULL_RE.finditer(src):
+        body = match.group(2)
+        base = _lineno(src, match.start(2))
+        for offset, raw in enumerate(body.splitlines()):
+            line = raw.rstrip("\r")
+            if DOWNLOAD_STMT_RE.match(line):
+                issues.append(
+                    (
+                        base + offset,
+                        "W211",
+                        (
+                            f'ActionScript uses a dynamic download statement "'
+                            f'{line.strip()[:60]}"; prefer a static prefetch; add '
+                            f"`{DOWNLOAD_MARKER}` if intentional"
+                        ),
+                    )
+                )
+    return issues
+
+
+def check_cve_names(src):
+    """E209: each <CVENames> value must be a valid CVE id; only one CVENames.
+
+    A single <CVENames> may hold several comma/space-separated CVE ids, but a
+    content object must not carry more than one <CVENames> element.
+    """
+    issues = []
+    matches = list(CVENAMES_TAG_RE.finditer(src))
+    if len(matches) > 1:
+        issues.append(
+            (
+                _lineno(src, matches[1].start()),
+                "E209",
+                (
+                    "more than one <CVENames> element in a content object; combine "
+                    f"into one comma-separated CVENames; add `{CVE_NAMES_MARKER}` "
+                    "if intentional"
+                ),
+            )
+        )
+    for match in matches:
+        value = _strip_cdata(match.group(1))
+        for token in re.split(r"[,\s]+", value):
+            if token and not CVE_RE.match(token):
+                issues.append(
+                    (
+                        _lineno(src, match.start()),
+                        "E209",
+                        (
+                            f'CVENames value "{token}" is not a valid CVE id (e.g. '
+                            f"CVE-2021-44228); add `{CVE_NAMES_MARKER}` if intentional"
+                        ),
+                    )
+                )
+    return issues
+
+
+def check_duplicate_mimefield_names(src):
+    """E210: two <MIMEField> entries in one object must not share a <Name>."""
+    issues = []
+    seen = {}
+    for match in NAMED_MIMEFIELD_RE.finditer(src):
+        name = match.group(1).strip()
+        if name in seen:
+            issues.append(
+                (
+                    _lineno(src, match.start()),
+                    "E210",
+                    (
+                        f'duplicate MIMEField <Name> "{name}" in one content object; '
+                        f"add `{MIMEFIELD_DUP_MARKER}` if intentional"
+                    ),
+                )
+            )
+        else:
+            seen[name] = match.start()
+    return issues
+
+
+def check_title(src):
+    """E211/W209: a <Title> must not be a placeholder or have stray whitespace."""
+    issues = []
+    for match in TITLE_TAG_RE.finditer(src):
+        inner = match.group(1)
+        lineno = _lineno(src, match.start())
+        value = _strip_cdata(inner)
+        if value.strip().lower() in DEFAULT_TITLES:
+            issues.append(
+                (
+                    lineno,
+                    "E211",
+                    (
+                        f'Title "{value.strip()}" is a default placeholder; give it a '
+                        f"real title; add `{TITLE_MARKER}` if intentional"
+                    ),
+                )
+            )
+        if "<![CDATA[" not in inner and (inner != inner.strip() or "\t" in inner):
+            issues.append(
+                (
+                    lineno,
+                    "W209",
+                    (
+                        "Title has leading/trailing whitespace or embedded tabs; add "
+                        f"`{TITLE_MARKER}` if intentional"
+                    ),
+                )
+            )
+    return issues
+
+
+def check_relevance(src):
+    """E212/E213: a <Relevance> must not be empty or the literal `true`."""
+    issues = []
+    for match in RELEVANCE_TAG_RE.finditer(src):
+        value = _strip_cdata(match.group(1)).strip()
+        lineno = _lineno(src, match.start())
+        if value == "":
+            issues.append(
+                (
+                    lineno,
+                    "E213",
+                    (
+                        "Relevance is empty; give it a real relevance clause; add "
+                        f"`{RELEVANCE_MARKER}` if intentional"
+                    ),
+                )
+            )
+        elif value.lower() == "true":
+            issues.append(
+                (
+                    lineno,
+                    "E212",
+                    (
+                        "Relevance is the literal `true`; it targets every endpoint; "
+                        f"add `{RELEVANCE_MARKER}` if intentional"
+                    ),
+                )
+            )
+    return issues
+
+
 def _content_object_blocks(root, src):
     """Return ordered [(start, end, element)] for the content objects in `src`.
 
@@ -710,19 +989,29 @@ def _check_dated_element(tag, element, disabled):
     return issues
 
 
-# (code, opt-out marker, check function) for the checks that scan element text;
+# (codes, opt-out marker, check function) for the checks that scan element text;
 # each function scans a single content-object block and returns local linenos.
+# `codes` is the tuple of check IDs the function can emit: the check is skipped
+# only when its marker is present or ALL of its codes are disabled, and an
+# individually-disabled code is dropped from the results afterward.
 VALUE_CHECKS = (
-    ("E200", MIMETYPE_MARKER, check_action_mimetypes),
-    ("E201", SOURCE_RELEASE_DATE_MARKER, check_source_release_date_format),
-    ("E202", MODIFICATION_TIME_MARKER, check_modification_time_format),
-    ("E203", DOWNLOAD_SIZE_MARKER, check_download_size_value),
-    ("E205", CPE_MARKER, check_cpe23),
-    ("E206", ACTION_UI_METADATA_MARKER, check_action_ui_metadata),
-    ("E207", CDATA_MARKER, check_cdata_required),
-    ("W204", CDATA_MARKER, check_actionscript_cdata),
-    ("W205", ACTION_BLANK_LINES_MARKER, check_actionscript_blank_lines),
-    ("W206", PREFETCH_MARKER, check_prefetch_lines),
+    (("E200",), MIMETYPE_MARKER, check_action_mimetypes),
+    (("E201",), SOURCE_RELEASE_DATE_MARKER, check_source_release_date_format),
+    (("E202",), MODIFICATION_TIME_MARKER, check_modification_time_format),
+    (("E203",), DOWNLOAD_SIZE_MARKER, check_download_size_value),
+    (("E205",), CPE_MARKER, check_cpe23),
+    (("E206",), ACTION_UI_METADATA_MARKER, check_action_ui_metadata),
+    (("E207",), CDATA_MARKER, check_cdata_required),
+    (("E209",), CVE_NAMES_MARKER, check_cve_names),
+    (("E210",), MIMEFIELD_DUP_MARKER, check_duplicate_mimefield_names),
+    (("E211", "W209"), TITLE_MARKER, check_title),
+    (("E212", "E213"), RELEVANCE_MARKER, check_relevance),
+    (("W204",), CDATA_MARKER, check_actionscript_cdata),
+    (("W205",), ACTION_BLANK_LINES_MARKER, check_actionscript_blank_lines),
+    (("W206",), PREFETCH_MARKER, check_prefetch_lines),
+    (("W207",), PREFETCH_HTTPS_MARKER, check_prefetch_https),
+    (("W208",), ACTIONSCRIPT_EMPTY_MARKER, check_empty_actionscript),
+    (("W211",), DOWNLOAD_MARKER, check_dynamic_download),
 )
 
 # (presence code, opt-out marker) -- markers scoped like the value checks
@@ -748,10 +1037,12 @@ def _run_checks(src, root, disabled):
         block = src[start:_end]
         start_line = _lineno(src, start)
         marker_text = block + outside
-        for code, marker, check in VALUE_CHECKS:
-            if code in disabled or marker in marker_text:
+        for codes, marker, check in VALUE_CHECKS:
+            if marker in marker_text or all(code in disabled for code in codes):
                 continue
             for lineno, found_code, message in check(block):
+                if found_code in disabled:
+                    continue
                 issues.append((start_line + lineno - 1, found_code, message))
         presence_disabled = set(disabled)
         for code, marker in PRESENCE_MARKERS:
@@ -773,6 +1064,9 @@ def _fix_block(block, marker_text, disabled, strict, now):
     fixed = []
     if "E203" not in disabled and DOWNLOAD_SIZE_MARKER not in marker_text:
         block, got = fix_download_size(block)
+        fixed += got
+    if "W209" not in disabled and TITLE_MARKER not in marker_text:
+        block, got = fix_title(block)
         fixed += got
     if "W205" not in disabled and ACTION_BLANK_LINES_MARKER not in marker_text:
         block, got = fix_blank_lines(block)
@@ -844,6 +1138,32 @@ def fix_download_size(src):
         return match.group(0)
 
     return DOWNLOAD_SIZE_TAG_RE.sub(repl, src), fixed
+
+
+def fix_title(src):
+    """W209: trim a <Title> and replace embedded tabs with spaces.
+
+    A CDATA-wrapped title is left untouched (its content is opaque here).
+    """
+    fixed = []
+
+    def repl(match):
+        inner = match.group(1)
+        if "<![CDATA[" in inner:
+            return match.group(0)
+        new_inner = inner.replace("\t", " ").strip()
+        if new_inner == inner:
+            return match.group(0)
+        fixed.append(
+            (
+                _lineno(src, match.start()),
+                "W209",
+                "trimmed Title and replaced tabs with spaces",
+            )
+        )
+        return f"<Title>{new_inner}</Title>"
+
+    return TITLE_TAG_RE.sub(repl, src), fixed
 
 
 def fix_blank_lines(src):
@@ -973,6 +1293,84 @@ def fix_missing_dates(src, now=None, fix_srd=True, fix_modtime=True):
 
 
 # --------------------------------------------------------------------------
+# file-level checks / fixers (E214 XML declaration, W210 trailing whitespace)
+# --------------------------------------------------------------------------
+
+
+def _xml_declaration_encoding(src):
+    """Return (has_decl, encoding_or_None) for the leading XML declaration."""
+    match = XML_DECL_RE.match(src)
+    if match is None:
+        return False, None
+    enc = XML_DECL_ENCODING_RE.search(match.group(1))
+    return True, (enc.group(1) if enc else None)
+
+
+def check_xml_declaration(src):
+    """E214: the file must open with an <?xml ... encoding="UTF-8"?> declaration."""
+    has_decl, encoding = _xml_declaration_encoding(src)
+    if not has_decl:
+        message = "file has no XML declaration"
+    elif encoding is None:
+        message = 'XML declaration has no encoding (expected encoding="UTF-8")'
+    elif encoding.lower() != "utf-8":
+        message = f'XML declaration encoding "{encoding}" is not UTF-8'
+    else:
+        return []
+    return [(1, "E214", f"{message}; add `{XML_DECL_MARKER}` if intentional")]
+
+
+def check_trailing_whitespace(src):
+    """W210: no line may have trailing spaces or tabs."""
+    issues = []
+    for lineno, line in enumerate(src.split("\n"), start=1):
+        if line != line.rstrip(" \t"):
+            issues.append(
+                (
+                    lineno,
+                    "W210",
+                    (
+                        "line has trailing whitespace; add "
+                        f"`{TRAILING_WS_MARKER}` if intentional"
+                    ),
+                )
+            )
+    return issues
+
+
+def fix_xml_declaration(src):
+    """E214: insert a UTF-8 XML declaration, or set encoding="UTF-8" on it."""
+    has_decl, encoding = _xml_declaration_encoding(src)
+    if has_decl and encoding is not None and encoding.lower() == "utf-8":
+        return src, []
+    if not has_decl:
+        # preserve a leading BOM if one is present
+        bom = "\ufeff" if src.startswith("\ufeff") else ""
+        body = src[len(bom) :]
+        new_src = f'{bom}<?xml version="1.0" encoding="UTF-8"?>\n{body}'
+        return new_src, [(1, "E214", "inserted XML declaration")]
+    match = XML_DECL_RE.match(src)
+    version = XML_DECL_VERSION_RE.search(match.group(1))
+    version_value = version.group(1) if version else "1.0"
+    new_decl = f'<?xml version="{version_value}" encoding="UTF-8"?>'
+    new_src = src[: match.start()] + new_decl + src[match.end() :]
+    return new_src, [(1, "E214", 'set XML declaration encoding to "UTF-8"')]
+
+
+def fix_trailing_whitespace(src):
+    """W210: strip trailing spaces/tabs from every line."""
+    new_src = TRAILING_WS_RE.sub("", src)
+    if new_src == src:
+        return src, []
+    fixed = [
+        (lineno, "W210", "stripped trailing whitespace")
+        for lineno, line in enumerate(src.split("\n"), start=1)
+        if line != line.rstrip(" \t")
+    ]
+    return new_src, fixed
+
+
+# --------------------------------------------------------------------------
 # driver
 # --------------------------------------------------------------------------
 
@@ -1018,6 +1416,14 @@ def check_file(path, disabled=frozenset(), strict=False, auto_fix=False, now=Non
     fixed = []
     if auto_fix:
         new_src, fixed = _autofix(src, root, disabled, strict, now)
+        # file-level fixers run on the whole document (after the per-block ones):
+        # strip trailing whitespace, then ensure the XML declaration.
+        if "W210" not in disabled and TRAILING_WS_MARKER not in src:
+            new_src, got = fix_trailing_whitespace(new_src)
+            fixed += got
+        if "E214" not in disabled and XML_DECL_MARKER not in src:
+            new_src, got = fix_xml_declaration(new_src)
+            fixed += got
         # CRLF normalization runs LAST: BES files must be entirely CRLF, so any
         # auto-fix leaves the whole file CRLF (rather than preserving endings).
         # If the CRLF rule is disabled, write whatever endings resulted (LF).
@@ -1037,6 +1443,12 @@ def check_file(path, disabled=frozenset(), strict=False, auto_fix=False, now=Non
             return [(1, "W200", f"not parseable BES XML after fixes ({err})")], fixed
 
     issues = _run_checks(src, root, disabled)
+    # file-level checks on the final src (after any fixes); in auto-fix mode
+    # these come back clean unless the specific fix was disabled.
+    if "E214" not in disabled and XML_DECL_MARKER not in src:
+        issues += check_xml_declaration(src)
+    if "W210" not in disabled and TRAILING_WS_MARKER not in src:
+        issues += check_trailing_whitespace(src)
     if not auto_fix and check_e208 and not crlf_ok:
         lone_lf = raw.count(b"\n") - raw.count(b"\r\n")
         lone_cr = raw.count(b"\r") - raw.count(b"\r\n")

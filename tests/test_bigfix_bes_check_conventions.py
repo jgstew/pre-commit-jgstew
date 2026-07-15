@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Tests for pre_commit_hooks/bigfix_bes_check_conventions.py.
 
-These exercise the BES content checks (E200-E206, W200-W206), the auto-fixers
-(DownloadSize, missing dates, blank-line collapse, CDATA wrap), the file-level
-and per-family opt-out markers, the mustache-template skip, and main()'s exit
-codes.
+These exercise the BES content checks (E200-E214, W200-W211), the auto-fixers
+(DownloadSize, missing dates, blank-line collapse, CDATA wrap, Title trim,
+trailing whitespace, XML declaration), the file-level and per-family opt-out
+markers, the mustache-template skip, and main()'s exit codes.
 """
 
 from datetime import datetime, timezone
@@ -27,6 +27,7 @@ def task(
     cdata=True,
     extra_mimefields=(),
     marker=None,
+    relevance='exists folder "/tmp"',
 ):
     """Build a well-formed single-Task BES document.
 
@@ -46,7 +47,7 @@ def task(
     lines.append("\t<Task>")
     lines.append(f"\t\t<Title>{title}</Title>")
     lines.append(f"\t\t<Description><![CDATA[{description}]]></Description>")
-    lines.append("\t\t<Relevance>true</Relevance>")
+    lines.append(f"\t\t<Relevance>{relevance}</Relevance>")
     lines.append(f"\t\t<DownloadSize>{download_size}</DownloadSize>")
     lines.append("\t\t<Source>test</Source>")
     if srd is not None:
@@ -301,10 +302,7 @@ def test_w204_autofix_wraps_under_strict(tmp_path):
 
 
 def test_e207_relevance_entity_escaped(tmp_path):
-    content = task().replace(
-        "<Relevance>true</Relevance>",
-        "<Relevance>exists x whose (a &lt; b)</Relevance>",
-    )
+    content = task(relevance="exists x whose (a &lt; b)")
     assert "E207" in codes(tmp_path, content)
 
 
@@ -316,17 +314,12 @@ def test_e207_actionscript_entity_amp(tmp_path):
 
 def test_e207_literal_gt_not_flagged(tmp_path):
     # a literal > is valid XML text and does not require CDATA
-    content = task().replace(
-        "<Relevance>true</Relevance>", "<Relevance>a > b</Relevance>"
-    )
+    content = task(relevance="a > b")
     assert "E207" not in codes(tmp_path, content)
 
 
 def test_e207_cdata_body_clean(tmp_path):
-    content = task().replace(
-        "<Relevance>true</Relevance>",
-        "<Relevance><![CDATA[exists x whose (a < b)]]></Relevance>",
-    )
+    content = task(relevance="<![CDATA[exists x whose (a < b)]]>")
     assert "E207" not in codes(tmp_path, content)
 
 
@@ -342,17 +335,12 @@ def test_e207_action_description_markup_not_flagged(tmp_path):
 
 
 def test_e207_marker_opts_out(tmp_path):
-    content = task(marker="cdata-ok").replace(
-        "<Relevance>true</Relevance>", "<Relevance>a &lt; b</Relevance>"
-    )
+    content = task(marker="cdata-ok", relevance="a &lt; b")
     assert "E207" not in codes(tmp_path, content)
 
 
 def test_e207_autofix_unescapes_and_wraps(tmp_path):
-    content = task().replace(
-        "<Relevance>true</Relevance>",
-        "<Relevance>version of it &gt;= &quot;1.0&quot; &amp; exists x</Relevance>",
-    )
+    content = task(relevance="version of it &gt;= &quot;1.0&quot; &amp; exists x")
     out, fixed = autofix(tmp_path, content)
     assert '<Relevance><![CDATA[version of it >= "1.0" & exists x]]></Relevance>' in out
     assert any(code == "E207" for _, code, _ in fixed)
@@ -687,3 +675,276 @@ def test_main_disable_suppresses(tmp_path):
 def test_main_no_files_is_zero(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert checker.main([]) == 0
+
+
+# --- W207 prefetch URL must be https --------------------------------------
+
+SHA1 = "a" * 40
+SHA256 = "b" * 64
+
+
+def _prefetch(scheme="https"):
+    return (
+        f"\nprefetch file.exe sha1:{SHA1} size:100 "
+        f"{scheme}://example.com/file.exe sha256:{SHA256}\n"
+    )
+
+
+def test_w207_http_prefetch_flagged(tmp_path):
+    got = codes(tmp_path, task(body=_prefetch("http"), download_size="100"))
+    assert "W207" in got
+    assert "W206" not in got  # the line is well-formed, just insecure
+
+
+def test_w207_https_prefetch_clean(tmp_path):
+    got = codes(tmp_path, task(body=_prefetch("https"), download_size="100"))
+    assert "W207" not in got
+
+
+def test_w207_marker_opts_out(tmp_path):
+    got = codes(
+        tmp_path,
+        task(body=_prefetch("http"), download_size="100", marker="prefetch-https-ok"),
+    )
+    assert "W207" not in got
+
+
+# --- W208 empty ActionScript ----------------------------------------------
+
+
+def test_w208_whitespace_only_body(tmp_path):
+    assert "W208" in codes(tmp_path, task(body="\n   \n\t\n"))
+
+
+def test_w208_only_comments(tmp_path):
+    assert "W208" in codes(tmp_path, task(body="\n// just a note\n// another\n"))
+
+
+def test_w208_real_body_clean(tmp_path):
+    assert "W208" not in codes(tmp_path, task(body="\n// note\necho hi\n"))
+
+
+def test_w208_marker_opts_out(tmp_path):
+    assert "W208" not in codes(
+        tmp_path, task(body="\n// note\n", marker="actionscript-empty-ok")
+    )
+
+
+# --- W211 dynamic download ------------------------------------------------
+
+
+def test_w211_download_statement_flagged(tmp_path):
+    assert "W211" in codes(tmp_path, task(body="\ndownload http://example.com/x\n"))
+
+
+def test_w211_download_now_flagged(tmp_path):
+    assert "W211" in codes(tmp_path, task(body="\n\tdownload now as file http://x\n"))
+
+
+def test_w211_download_in_comment_not_flagged(tmp_path):
+    assert "W211" not in codes(
+        tmp_path, task(body="\n// download the file first\necho hi\n")
+    )
+
+
+def test_w211_download_midline_not_flagged(tmp_path):
+    assert "W211" not in codes(tmp_path, task(body="\nappendfile download this\n"))
+
+
+def test_w211_marker_opts_out(tmp_path):
+    got = codes(tmp_path, task(body="\ndownload http://x\n", marker="download-ok"))
+    assert "W211" not in got
+
+
+# --- E209 CVENames --------------------------------------------------------
+
+
+def _with_cve(cve_block):
+    return task().replace(
+        "<Source>test</Source>", f"<Source>test</Source>\n\t\t{cve_block}"
+    )
+
+
+def test_e209_valid_single_cve_clean(tmp_path):
+    assert "E209" not in codes(
+        tmp_path, _with_cve("<CVENames>CVE-2021-44228</CVENames>")
+    )
+
+
+def test_e209_valid_multiple_values_clean(tmp_path):
+    content = _with_cve("<CVENames>CVE-2021-44228, CVE-2021-45046</CVENames>")
+    assert "E209" not in codes(tmp_path, content)
+
+
+def test_e209_invalid_value_flagged(tmp_path):
+    assert "E209" in codes(tmp_path, _with_cve("<CVENames>CVE-BAD</CVENames>"))
+
+
+def test_e209_multiple_cvenames_flagged(tmp_path):
+    content = _with_cve(
+        "<CVENames>CVE-2021-44228</CVENames>\n\t\t<CVENames>CVE-2021-45046</CVENames>"
+    )
+    assert "E209" in codes(tmp_path, content)
+
+
+def test_e209_marker_opts_out(tmp_path):
+    content = task(marker="cve-names-ok").replace(
+        "<Source>test</Source>",
+        "<Source>test</Source>\n\t\t<CVENames>CVE-BAD</CVENames>",
+    )
+    assert "E209" not in codes(tmp_path, content)
+
+
+# --- E210 duplicate MIMEField Name ----------------------------------------
+
+
+def test_e210_duplicate_name_flagged(tmp_path):
+    content = task(
+        extra_mimefields=[("x-fixlet-source", "a"), ("x-fixlet-source", "b")]
+    )
+    assert "E210" in codes(tmp_path, content)
+
+
+def test_e210_distinct_names_clean(tmp_path):
+    content = task(extra_mimefields=[("x-fixlet-source", "a"), ("x-other", "b")])
+    assert "E210" not in codes(tmp_path, content)
+
+
+def test_e210_marker_opts_out(tmp_path):
+    content = task(
+        marker="mimefield-name-ok",
+        extra_mimefields=[("x-dup", "a"), ("x-dup", "b")],
+    )
+    assert "E210" not in codes(tmp_path, content)
+
+
+# --- E211 / W209 Title hygiene --------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "title", ["Custom Fixlet", "Custom Task", "Custom Baseline", "Custom Analysis"]
+)
+def test_e211_default_titles_flagged(tmp_path, title):
+    assert "E211" in codes(tmp_path, task(title=title))
+
+
+def test_e211_case_insensitive(tmp_path):
+    assert "E211" in codes(tmp_path, task(title="custom task"))
+
+
+def test_e211_real_title_clean(tmp_path):
+    assert "E211" not in codes(tmp_path, task(title="Install Widget 1.2"))
+
+
+def test_w209_leading_trailing_whitespace_flagged(tmp_path):
+    got = codes(tmp_path, task(title=" Example "))
+    assert "W209" in got and "E211" not in got
+
+
+def test_w209_tab_flagged(tmp_path):
+    assert "W209" in codes(tmp_path, task(title="Ex\tample"))
+
+
+def test_w209_autofix_trims_and_detabs(tmp_path):
+    out, fixed = autofix(tmp_path, task(title="  Ex\tample  "))
+    assert "<Title>Ex ample</Title>" in out
+    assert any(code == "W209" for _, code, _ in fixed)
+
+
+def test_title_marker_opts_out(tmp_path):
+    assert "E211" not in codes(tmp_path, task(title="Custom Task", marker="title-ok"))
+
+
+# --- E212 / E213 Relevance ------------------------------------------------
+
+
+def test_e212_literal_true_flagged(tmp_path):
+    assert "E212" in codes(tmp_path, task(relevance="true"))
+
+
+def test_e212_case_insensitive(tmp_path):
+    assert "E212" in codes(tmp_path, task(relevance="TRUE"))
+
+
+def test_e213_empty_relevance_flagged(tmp_path):
+    assert "E213" in codes(tmp_path, task(relevance=""))
+
+
+def test_e213_whitespace_relevance_flagged(tmp_path):
+    assert "E213" in codes(tmp_path, task(relevance="   "))
+
+
+def test_relevance_real_clause_clean(tmp_path):
+    got = codes(tmp_path, task(relevance='exists file "/etc/hosts"'))
+    assert "E212" not in got and "E213" not in got
+
+
+def test_relevance_marker_opts_out(tmp_path):
+    assert "E212" not in codes(tmp_path, task(relevance="true", marker="relevance-ok"))
+
+
+# --- E214 XML declaration -------------------------------------------------
+
+
+def _no_decl(content):
+    return "\n".join(content.split("\n")[1:])
+
+
+def test_e214_missing_declaration_flagged(tmp_path):
+    assert "E214" in codes(tmp_path, _no_decl(task()))
+
+
+def test_e214_wrong_encoding_flagged(tmp_path):
+    content = task().replace('encoding="UTF-8"', 'encoding="ISO-8859-1"')
+    assert "E214" in codes(tmp_path, content)
+
+
+def test_e214_lowercase_utf8_clean(tmp_path):
+    content = task().replace('encoding="UTF-8"', 'encoding="utf-8"')
+    assert "E214" not in codes(tmp_path, content)
+
+
+def test_e214_autofix_inserts_declaration(tmp_path):
+    out, fixed = autofix(tmp_path, _no_decl(task()))
+    assert out.startswith('<?xml version="1.0" encoding="UTF-8"?>')
+    assert any(code == "E214" for _, code, _ in fixed)
+    assert "E214" not in codes(tmp_path, out, name="after.bes")
+
+
+def test_e214_autofix_sets_encoding(tmp_path):
+    content = task().replace('encoding="UTF-8"', 'encoding="ISO-8859-1"')
+    out, _ = autofix(tmp_path, content)
+    assert 'encoding="UTF-8"' in out.split("\n")[0]
+
+
+def test_e214_marker_opts_out(tmp_path):
+    content = _no_decl(task()).replace("<BES", "<!-- xml-declaration-ok -->\n<BES", 1)
+    assert "E214" not in codes(tmp_path, content)
+
+
+# --- W210 trailing whitespace ---------------------------------------------
+
+
+def test_w210_trailing_whitespace_flagged(tmp_path):
+    content = task().replace("<Source>test</Source>", "<Source>test</Source>   ")
+    assert "W210" in codes(tmp_path, content)
+
+
+def test_w210_clean_when_none(tmp_path):
+    assert "W210" not in codes(tmp_path, task())
+
+
+def test_w210_autofix_strips(tmp_path):
+    content = task().replace("<Source>test</Source>", "<Source>test</Source>\t ")
+    out, fixed = autofix(tmp_path, content)
+    assert "<Source>test</Source>\t " not in out
+    assert "<Source>test</Source>\n" in out
+    assert any(code == "W210" for _, code, _ in fixed)
+    assert "W210" not in codes(tmp_path, out, name="after.bes")
+
+
+def test_w210_marker_opts_out(tmp_path):
+    content = task(marker="trailing-whitespace-ok").replace(
+        "<Source>test</Source>", "<Source>test</Source>   "
+    )
+    assert "W210" not in codes(tmp_path, content)

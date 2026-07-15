@@ -132,13 +132,17 @@
     Picky, opinionated content checks + auto-fixes for BigFix BES files that the
     BES.xsd schema (validate-bes) cannot express: ActionScript MIMEType is one of
     the allowed set; SourceReleaseDate/x-fixlet-modification-time/DownloadSize/
-    action-ui-metadata/CPE-2.3 value formats; prefetch-line shape; CDATA usage;
-    blank-line spacing; description-placeholder; and Task/Fixlet release-date/
-    modification-time presence and download actions. Auto-fixes the fixable ones
-    in place (DownloadSize -> 0, missing dates -> now, blank-line collapse; and,
-    under --strict, CDATA wrapping) and exits 1 when anything was fixed.
-    Unparsable files are skipped (validate-bes owns validity). E-codes fail the
-    hook; pass --strict to also fail on warnings.
+    action-ui-metadata/CPE-2.3/CVENames value formats; prefetch-line shape and
+    https URLs; CDATA usage; blank-line and trailing-whitespace spacing; empty
+    ActionScript; dynamic download statements; a UTF-8 XML declaration; Title
+    placeholders/whitespace; non-trivial non-empty Relevance; unique MIMEField
+    names; description-placeholder; and Task/Fixlet release-date/modification-time
+    presence and download actions. Auto-fixes the fixable ones in place
+    (DownloadSize -> 0, missing dates -> now, blank-line collapse, Title trim,
+    trailing-whitespace strip, XML-declaration insert/normalize; and, under
+    --strict, CDATA wrapping) and exits 1 when anything was fixed. Unparsable
+    files are skipped (validate-bes owns validity). E-codes fail the hook; pass
+    --strict to also fail on warnings.
   language: python
   pass_filenames: True
   entry: check-bes-conventions
