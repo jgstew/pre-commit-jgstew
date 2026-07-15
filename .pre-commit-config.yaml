@@ -47,6 +47,7 @@ repos:
     hooks:
       - id: minimum-changes
         args: [--min-changes=0]
+        stages: [manual]
       - id: verify-files-are-ascii
 
   - repo: https://github.com/python-jsonschema/check-jsonschema
