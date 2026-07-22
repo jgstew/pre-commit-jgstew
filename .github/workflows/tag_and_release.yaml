@@ -62,7 +62,7 @@ jobs:
 
       # Cache the pre-commit environments based on the config file hash
       - name: Cache Pre-Commit Environments
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
