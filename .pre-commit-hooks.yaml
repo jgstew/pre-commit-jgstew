@@ -8,8 +8,15 @@
   require_serial: True
   types: [text]
 - id: validate-bes
-  name: Validate BigFix BES Files
-  description: This hook validates BigFix BES XML Files
+  name: "Validate BigFix BES Files (DEPRECATED: moved to jgstew/pre-commit-bigfix)"
+  # verbose: true keeps the deprecation banner visible even when the hook
+  # passes; remove the hook entirely in the release after this one.
+  verbose: true
+  description: >
+    DEPRECATED: this hook moved to https://github.com/jgstew/pre-commit-bigfix
+    and will be removed from this repo in the next release; point your
+    .pre-commit-config.yaml at the new repo.
+    This hook validates BigFix BES XML Files
   entry: validate-bes
   language: python
   pass_filenames: True

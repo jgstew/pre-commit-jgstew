@@ -51,7 +51,6 @@ repos:
       - id: fix-files-to-ascii
       - id: verify-files-are-ascii
 
-
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: 0.37.4
     hooks:

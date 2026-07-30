@@ -1,8 +1,25 @@
 """A pre-commit hook to validate BigFix BES files."""
 
 import argparse
+import sys
 
 import validate_bes_xml
+
+# This hook has moved to https://github.com/jgstew/pre-commit-bigfix and will
+# be removed from pre-commit-jgstew in the next release. main() prints this on
+# stderr every run (the hook entry sets `verbose: true` so pre-commit shows it
+# even on success).
+DEPRECATION_BANNER = """\
+****************************************************************************
+* DEPRECATED: `validate-bes` has MOVED to a new repo:                      *
+*     https://github.com/jgstew/pre-commit-bigfix                          *
+* It will be REMOVED from pre-commit-jgstew in the next release.           *
+* Update your .pre-commit-config.yaml:                                     *
+*   - repo: https://github.com/jgstew/pre-commit-bigfix                    *
+*     rev: v0.2.0                                                          *
+*     hooks:                                                               *
+*       - id: validate-bes                                                 *
+****************************************************************************"""
 
 
 def build_argument_parser():
@@ -18,6 +35,8 @@ def build_argument_parser():
 
 def main(argv=None):
     """Main process."""
+
+    print(DEPRECATION_BANNER, file=sys.stderr)
 
     # Parse command line arguments.
     argparser = build_argument_parser()

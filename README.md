@@ -29,7 +29,7 @@ After adding a hook to your pre-commit config, it's not a bad idea to run `pre-c
 | id                             | description                                                                                                                                                                                                                                                                          |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `minimum-changes`              | Require a minimum number of changed lines against the git diff.                                                                                                                                                                                                                      |
-| `validate-bes`                 | Validate BigFix BES XML files.                                                                                                                                                                                                                                                       |
+| `validate-bes`                 | **DEPRECATED - moved to [pre-commit-bigfix](https://github.com/jgstew/pre-commit-bigfix); update your `.pre-commit-config.yaml` to point there.** Validate BigFix BES XML files.                                                                                                     |
 | `validate-plist`               | Validate Apple plist files (`.recipe`, `.plist`).                                                                                                                                                                                                                                    |
 | `verify-files-contain-entry`   | Require a file to contain a regex match/group found in a reference file.                                                                                                                                                                                                             |
 | `verify-files-contain-pattern` | Require a file to contain a regex pattern.                                                                                                                                                                                                                                           |
@@ -46,19 +46,20 @@ After adding a hook to your pre-commit config, it's not a bad idea to run `pre-c
 
 The AutoPkg convention hooks (`check-processor-conventions`, `check-recipe-conventions`) auto-fix the fixable issues in place and exit non-zero so the changes are reviewed and re-staged; `check-recipe-conventions` accepts `args: ["--strict"]` to also fail on remaining warnings. `check-bes-conventions` is the content-level companion to `validate-bes` (which only checks XSD validity); its `E`-codes fail the hook, it auto-fixes the fixable conventions (invalid `DownloadSize` -> 0, missing `SourceReleaseDate`/`x-fixlet-modification-time` -> the moment it ran, collapsed `ActionScript` blank lines), and it accepts `args: ["--strict"]` to fail on warnings too and to enable the CDATA-wrap auto-fix.
 
-### Deprecation: check-bes-conventions has moved
+### Deprecation: the BigFix hooks have moved
 
-`check-bes-conventions` now lives in its own repo:
+`validate-bes` and `check-bes-conventions` now live in their own repo:
 [jgstew/pre-commit-bigfix](https://github.com/jgstew/pre-commit-bigfix).
-This repo carries the hook for ONE more release, with a loud deprecation
-warning on every run, and it will be REMOVED in the release after that.
+This repo carries the hooks for ONE more release, with a loud deprecation
+warning on every run, and they will be REMOVED in the release after that.
 Update your `.pre-commit-config.yaml`:
 
 ```yaml
 repos:
   - repo: https://github.com/jgstew/pre-commit-bigfix
-    rev: v0.1.0
+    rev: v0.2.0
     hooks:
+      - id: validate-bes
       - id: check-bes-conventions
 ```
 

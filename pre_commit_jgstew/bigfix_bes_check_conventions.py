@@ -153,7 +153,7 @@ DEPRECATION_BANNER = """\
 * It will be REMOVED from pre-commit-jgstew in the next release.           *
 * Update your .pre-commit-config.yaml:                                     *
 *   - repo: https://github.com/jgstew/pre-commit-bigfix                    *
-*     rev: v0.1.0                                                          *
+*     rev: v0.2.0                                                          *
 *     hooks:                                                               *
 *       - id: check-bes-conventions                                        *
 ****************************************************************************"""
