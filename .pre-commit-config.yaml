@@ -43,12 +43,14 @@ repos:
       - id: black
 
   - repo: https://github.com/jgstew/pre-commit-jgstew
-    rev: v1.6.2
+    rev: v2.1.1
     hooks:
       - id: minimum-changes
         args: [--min-changes=0]
         stages: [manual]
+      - id: fix-files-to-ascii
       - id: verify-files-are-ascii
+
 
   - repo: https://github.com/python-jsonschema/check-jsonschema
     rev: 0.37.4

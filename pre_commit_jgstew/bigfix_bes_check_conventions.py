@@ -142,6 +142,22 @@ import sys
 from datetime import datetime, timezone
 from xml.etree import ElementTree
 
+# This hook has moved to https://github.com/jgstew/pre-commit-bigfix and will
+# be removed from pre-commit-jgstew in the next release. main() prints this on
+# stderr every run (the hook entry sets `verbose: true` so pre-commit shows it
+# even on success).
+DEPRECATION_BANNER = """\
+****************************************************************************
+* DEPRECATED: `check-bes-conventions` has MOVED to a new repo:             *
+*     https://github.com/jgstew/pre-commit-bigfix                          *
+* It will be REMOVED from pre-commit-jgstew in the next release.           *
+* Update your .pre-commit-config.yaml:                                     *
+*   - repo: https://github.com/jgstew/pre-commit-bigfix                    *
+*     rev: v0.1.0                                                          *
+*     hooks:                                                               *
+*       - id: check-bes-conventions                                        *
+****************************************************************************"""
+
 SKIP_MARKER = "pre-commit-skip: bes-conventions"
 
 # per-check opt-out markers (matched anywhere in the file text)
@@ -1511,6 +1527,8 @@ def main(argv=None):
     (pre-commit calls it with no arguments; argparse then reads sys.argv) and
     when called directly as `main(sys.argv[1:])`.
     """
+    print(DEPRECATION_BANNER, file=sys.stderr)
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--strict",

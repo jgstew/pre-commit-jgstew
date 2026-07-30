@@ -42,9 +42,25 @@ After adding a hook to your pre-commit config, it's not a bad idea to run `pre-c
 | `add-missing-docstrings`       | Insert a boilerplate docstring into named functions when absent (default: `main`).                                                                                                                                                                                                   |
 | `check-processor-conventions`  | Picky, opinionated checks + auto-fixes for AutoPkg processor `.py` files (boilerplate, docstrings, `input`/`output_variables`, `__main__` guard, naming, ...).                                                                                                                       |
 | `check-recipe-conventions`     | Picky, opinionated cross-field checks + auto-fixes for AutoPkg recipe files (YAML or plist): `Identifier`<->`NAME`, `ParentRecipe` resolvability/cycles, duplicate `Identifier`/`Description`, filename<->identifier type, `MinimumVersion` floor, `Process`-step spacing, and more. |
-| `check-bes-conventions`        | Picky, opinionated content checks + auto-fixes for BigFix BES files that go beyond the BES.xsd schema (`validate-bes`): `ActionScript` MIMEType allowlist, `SourceReleaseDate`/`x-fixlet-modification-time`/`DownloadSize`/`action-ui-metadata`/CPE-2.3 formats, prefetch-line shape, CDATA usage, blank-line spacing, description-placeholder, and Task/Fixlet release-date/modification-time presence.                        |
+| `check-bes-conventions`        | **DEPRECATED - moved to [pre-commit-bigfix](https://github.com/jgstew/pre-commit-bigfix); update your `.pre-commit-config.yaml` to point there.** Picky, opinionated content checks + auto-fixes for BigFix BES files that go beyond the BES.xsd schema (`validate-bes`): `ActionScript` MIMEType allowlist, `SourceReleaseDate`/`x-fixlet-modification-time`/`DownloadSize`/`action-ui-metadata`/CPE-2.3 formats, prefetch-line shape, CDATA usage, blank-line spacing, description-placeholder, and Task/Fixlet release-date/modification-time presence.                        |
 
 The AutoPkg convention hooks (`check-processor-conventions`, `check-recipe-conventions`) auto-fix the fixable issues in place and exit non-zero so the changes are reviewed and re-staged; `check-recipe-conventions` accepts `args: ["--strict"]` to also fail on remaining warnings. `check-bes-conventions` is the content-level companion to `validate-bes` (which only checks XSD validity); its `E`-codes fail the hook, it auto-fixes the fixable conventions (invalid `DownloadSize` -> 0, missing `SourceReleaseDate`/`x-fixlet-modification-time` -> the moment it ran, collapsed `ActionScript` blank lines), and it accepts `args: ["--strict"]` to fail on warnings too and to enable the CDATA-wrap auto-fix.
+
+### Deprecation: check-bes-conventions has moved
+
+`check-bes-conventions` now lives in its own repo:
+[jgstew/pre-commit-bigfix](https://github.com/jgstew/pre-commit-bigfix).
+This repo carries the hook for ONE more release, with a loud deprecation
+warning on every run, and it will be REMOVED in the release after that.
+Update your `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: https://github.com/jgstew/pre-commit-bigfix
+    rev: v0.1.0
+    hooks:
+      - id: check-bes-conventions
+```
 
 ## Test commands:
 

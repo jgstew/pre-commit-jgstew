@@ -127,8 +127,14 @@
   types: [text]
   files: \.recipe(\.ya?ml)?$
 - id: check-bes-conventions
-  name: Check BigFix BES conventions
+  name: "Check BigFix BES conventions (DEPRECATED: moved to jgstew/pre-commit-bigfix)"
+  # verbose: true keeps the deprecation banner visible even when the hook
+  # passes; remove the hook entirely in the release after this one.
+  verbose: true
   description: >
+    DEPRECATED: this hook moved to https://github.com/jgstew/pre-commit-bigfix
+    and will be removed from this repo in the next release; point your
+    .pre-commit-config.yaml at the new repo.
     Picky, opinionated content checks + auto-fixes for BigFix BES files that the
     BES.xsd schema (validate-bes) cannot express: ActionScript MIMEType is one of
     the allowed set; SourceReleaseDate/x-fixlet-modification-time/DownloadSize/
