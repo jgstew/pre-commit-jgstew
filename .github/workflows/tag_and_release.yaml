@@ -83,7 +83,7 @@ jobs:
       #   what if no other tests?
       - name: Wait for tests to succeed
         if: steps.tagged.outputs.tagged == 1
-        uses: lewagon/wait-on-check-action@v1.8.1
+        uses: lewagon/wait-on-check-action@v1.9.0
         with:
           ref: main
           running-workflow-name: "Tag and Release"
