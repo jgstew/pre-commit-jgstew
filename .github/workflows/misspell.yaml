@@ -18,7 +18,7 @@ jobs:
           persist-credentials: false
       - name: misspell
         if: ${{ !env.ACT }}
-        uses: reviewdog/action-misspell@v1.27.0
+        uses: reviewdog/action-misspell@v1.29.0
         with:
           github_token: ${{ secrets.github_token }}
           locale: "US"
